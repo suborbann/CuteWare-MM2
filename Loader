@@ -64,36 +64,123 @@ local selectedPlayers  = {}
 local antiFlingEnabled = false
 local isFlinging       = false
 
-local innoEsp, sheriffEsp, murdEsp         = false, false, false
-local innoChams, sheriffChams, murdChams   = false, false, false
-local coinsChams       = false
-local antiVoidEnabled  = false
-local lowGfxEnabled    = false
-local originalGfx      = {}
+local innoEsp, sheriffEsp, murdEsp       = false, false, false
+local innoChams, sheriffChams, murdChams = false, false, false
+local coinsChams        = false
+local antiVoidEnabled   = false
+local lowGfxEnabled     = false
+local originalGfx       = {}
 local chamsOpacityValue = 0.7
 
-local aimbotEnabled    = false
-local aimbotMode       = "Hold"
-local aimbotKey        = Enum.KeyCode.F
-local aimbotSmoothness = 0
-local lockingMode      = "Camera"
+local aimbotEnabled     = false
+local aimbotMode        = "Hold"
+local aimbotKey         = Enum.KeyCode.F
+local aimbotSmoothness  = 0
+local lockingMode       = "Camera"
 local cameraModeSetting = "First Person"
-local isAimingPressed  = false
-local shootSideSetting = "From Back"
+local isAimingPressed   = false
+local shootSideSetting  = "From Back"
 
-local shootingMurderer = false
-local killingSheriff   = false
-local killingEveryone  = false
-local killingPlayer    = false
-local killPlayerTargetName = ""
+local shootingMurderer      = false
+local killingSheriff        = false
+local killingEveryone       = false
+local killingPlayer         = false
+local killPlayerTargetName  = ""
 local killEveryoneWhitelist = {}
 
-local playerRoles    = {}
-local lobbyPosition  = Vector3.new(13.82, 504.78, -51.92)
-local lobbyRadius    = 150
+local playerRoles       = {}
+local lobbyPosition     = Vector3.new(13.82, 504.78, -51.92)
+local lobbyRadius       = 150
 local selectedMapToVote = "Map 1"
 
--- ===================== EMOTE ENGINE (single, clean) =====================
+-- ===================== FIX 1: GUN DROP CACHE =====================
+-- вместо GetDescendants() каждые 0.5с — слушаем события добавления/удаления
+local cachedGunDrop = nil
+
+local function isGunDropPart(desc)
+    if not desc:IsA("BasePart") then return false end
+    local n = desc.Name
+    return n == "GunDrop" or n == "Gun_Drop"
+        or (n == "Gun" and not desc.Parent:IsA("Model") and not desc.Parent:IsA("Backpack"))
+end
+
+-- сканируем один раз при старте
+for _, desc in ipairs(Workspace:GetDescendants()) do
+    if isGunDropPart(desc) then
+        cachedGunDrop = desc
+        break
+    end
+end
+
+regConn(Workspace.DescendantAdded:Connect(function(desc)
+    if isGunDropPart(desc) then
+        cachedGunDrop = desc
+    end
+end))
+
+regConn(Workspace.DescendantRemoving:Connect(function(desc)
+    if desc == cachedGunDrop then
+        cachedGunDrop = nil
+    end
+end))
+
+local function findGunDrop()
+    if cachedGunDrop and cachedGunDrop.Parent then
+        return cachedGunDrop
+    end
+    cachedGunDrop = nil
+    return nil
+end
+
+-- ===================== FIX 3: AIMBOT TARGET CACHE =====================
+-- обновляем цель раз в 0.2с, а не ищем каждый фрейм
+local cachedAimbotTarget = nil
+local lastAimbotScan     = 0
+
+local function updateAimbotTarget()
+    local now = tick()
+    if now - lastAimbotScan < 0.2 then return end
+    lastAimbotScan = now
+
+    cachedAimbotTarget = nil
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            local hasKnife = false
+            local char = p.Character
+            local bp   = p.Backpack
+            if char then
+                for _, tool in ipairs(char:GetChildren()) do
+                    if tool:IsA("Tool") then
+                        local ln = tool.Name:lower()
+                        if ln == "knife" or tool:FindFirstChild("KnifeScript") or tool:FindFirstChild("Stab") or tool:FindFirstChild("Slash") then
+                            hasKnife = true break
+                        end
+                    end
+                end
+            end
+            if not hasKnife and bp then
+                for _, tool in ipairs(bp:GetChildren()) do
+                    if tool:IsA("Tool") then
+                        local ln = tool.Name:lower()
+                        if ln == "knife" or tool:FindFirstChild("KnifeScript") or tool:FindFirstChild("Stab") or tool:FindFirstChild("Slash") then
+                            hasKnife = true break
+                        end
+                    end
+                end
+            end
+            if hasKnife and char then
+                local root = char:FindFirstChild("HumanoidRootPart")
+                local hum  = char:FindFirstChildOfClass("Humanoid")
+                if root and hum and hum.Health > 0 then
+                    cachedAimbotTarget = root
+                    break
+                end
+            end
+        end
+    end
+end
+
+-- ===================== EMOTE ENGINE =====================
 local activeTracks     = {}
 local currentEmoteName = nil
 local isEmotePlaying   = false
@@ -108,14 +195,12 @@ end
 local function stopAllEmotes()
     for _, track in ipairs(activeTracks) do
         pcall(function()
-            if track and track.IsPlaying then
-                track:Stop(0.1)
-            end
+            if track and track.IsPlaying then track:Stop(0.1) end
         end)
     end
-    activeTracks       = {}
-    currentEmoteName   = nil
-    isEmotePlaying     = false
+    activeTracks     = {}
+    currentEmoteName = nil
+    isEmotePlaying   = false
     if movementConn then
         movementConn:Disconnect()
         movementConn = nil
@@ -123,10 +208,7 @@ local function stopAllEmotes()
 end
 
 local function startMovementMonitor(emoteName)
-    if movementConn then
-        movementConn:Disconnect()
-        movementConn = nil
-    end
+    if movementConn then movementConn:Disconnect() movementConn = nil end
     movementConn = RunService.Heartbeat:Connect(function()
         if not isEmotePlaying or currentEmoteName ~= emoteName then
             movementConn:Disconnect()
@@ -134,83 +216,56 @@ local function startMovementMonitor(emoteName)
             return
         end
         local hum = getHumanoid()
-        if hum and hum.MoveDirection.Magnitude > 0.1 then
-            stopAllEmotes()
-        end
+        if hum and hum.MoveDirection.Magnitude > 0.1 then stopAllEmotes() end
     end)
 end
 
 local function playEmoteById(emoteName, animId, looped, priority)
     local hum = getHumanoid()
-    if not hum then
-        warn("Humanoid not found")
-        return false
-    end
-
+    if not hum then warn("Humanoid not found") return false end
     stopAllEmotes()
-
     local anim = Instance.new("Animation")
     anim.AnimationId = "rbxassetid://" .. tostring(animId)
-
     local track
     local ok, err = pcall(function()
-        -- Prefer Animator if available
         local animator = hum:FindFirstChildOfClass("Animator")
-        if animator then
-            track = animator:LoadAnimation(anim)
-        else
-            track = hum:LoadAnimation(anim)
-        end
+        if animator then track = animator:LoadAnimation(anim)
+        else track = hum:LoadAnimation(anim) end
     end)
-
     if not ok or not track then
         warn("Failed to load animation " .. emoteName .. ": " .. tostring(err))
         anim:Destroy()
         return false
     end
-
     track.Priority = priority or Enum.AnimationPriority.Action
     track.Looped   = looped or false
-
     local playOk, playErr = pcall(function() track:Play(0.15) end)
     if not playOk then
         warn("Failed to play animation " .. emoteName .. ": " .. tostring(playErr))
         anim:Destroy()
         return false
     end
-
     table.insert(activeTracks, track)
     currentEmoteName = emoteName
     isEmotePlaying   = true
-
-    -- Stop on jump
     local hum2 = getHumanoid()
     if hum2 then
         hum2.Jumping:Connect(function(active)
-            if active and isEmotePlaying and currentEmoteName == emoteName then
-                stopAllEmotes()
-            end
+            if active and isEmotePlaying and currentEmoteName == emoteName then stopAllEmotes() end
         end)
     end
-
-    -- Auto-stop when non-looped finishes
     if not looped then
         local length = track.Length
         if length and length > 0 then
             task.delay(length + 0.05, function()
-                if currentEmoteName == emoteName then
-                    stopAllEmotes()
-                end
+                if currentEmoteName == emoteName then stopAllEmotes() end
             end)
         end
     end
-
     startMovementMonitor(emoteName)
-    print("Emote started: " .. emoteName .. " (ID: " .. tostring(animId) .. ")")
     return true
 end
 
--- Official Roblox default emote IDs
 local DEFAULT_EMOTE_IDS = {
     ["Wave"]    = { id = 507770239, loop = false },
     ["Cheer"]   = { id = 507770677, loop = false },
@@ -236,32 +291,24 @@ local function playCustomEmoteByID(id)
 end
 
 local MM2_EMOTES = {
-    { name = "Sit",        id = 104314026629306, loop = true  },
-    { name = "Ninja Rest", id = 98307289830370,  loop = true  },
-    { name = "Zen",        id = 76095183942765,  loop = true  },
-    { name = "Floss",      id = 5917570207,       loop = true  },
+    { name = "Sit",        id = 104314026629306, loop = true },
+    { name = "Ninja Rest", id = 98307289830370,  loop = true },
+    { name = "Zen",        id = 76095183942765,  loop = true },
+    { name = "Floss",      id = 5917570207,       loop = true },
 }
 
 local function playMM2Emote(name, id, loop)
     local ok = playEmoteById("mm2_" .. name, id, loop, Enum.AnimationPriority.Action)
     if not ok then
-        CuteWare:Notify({
-            Title   = "Warning",
-            Content = "MM2 animation " .. name .. " (#" .. tostring(id) .. ") failed to load.",
-            Duration = 4
-        })
+        CuteWare:Notify({ Title = "Warning", Content = "MM2 animation " .. name .. " (#" .. tostring(id) .. ") failed to load.", Duration = 4 })
     end
 end
 
--- Auto-cleanup on respawn
 regConn(LocalPlayer.CharacterAdded:Connect(function()
     activeTracks     = {}
     currentEmoteName = nil
     isEmotePlaying   = false
-    if movementConn then
-        movementConn:Disconnect()
-        movementConn = nil
-    end
+    if movementConn then movementConn:Disconnect() movementConn = nil end
 end))
 
 -- ===================== UI LOAD =====================
@@ -279,13 +326,13 @@ CuteWare:CreateKeySystem({
 })
 
 local Window = CuteWare:CreateWindow({
-    Name                      = "cuteware",
-    Subtitle                  = "Murder Mystery 2",
-    Size                      = UDim2.new(0, 600, 0, 450),
-    Icon                      = 125089054351368,
-    BackgroundImage           = "rbxassetid://139904778246005",
+    Name                        = "cuteware",
+    Subtitle                    = "Murder Mystery 2",
+    Size                        = UDim2.new(0, 600, 0, 450),
+    Icon                        = 125089054351368,
+    BackgroundImage             = "rbxassetid://139904778246005",
     BackgroundImageTransparency = 0.75,
-    ToggleKeybind             = Enum.KeyCode.RightControl,
+    ToggleKeybind               = Enum.KeyCode.RightControl,
 })
 
 task.spawn(function()
@@ -386,7 +433,9 @@ end
 -- ===================== CHAMS =====================
 local function clearChams(character)
     for _, desc in ipairs(character:GetDescendants()) do
-        if desc.Name == "CuteWareChamAdornment" then pcall(function() desc:Destroy() end) end
+        if desc.Name == "CuteWareChamAdornment" then
+            desc:Destroy()
+        end
     end
 end
 
@@ -396,14 +445,14 @@ local function applyChams(character, color, opacity)
             local adorn = part:FindFirstChild("CuteWareChamAdornment")
             if not adorn then
                 adorn = Instance.new("BoxHandleAdornment")
-                adorn.Name = "CuteWareChamAdornment"
-                adorn.Size = part.Size + Vector3.new(0.02, 0.02, 0.02)
+                adorn.Name        = "CuteWareChamAdornment"
+                adorn.Size        = part.Size + Vector3.new(0.02, 0.02, 0.02)
                 adorn.AlwaysOnTop = true
-                adorn.ZIndex = 6
-                adorn.Adornee = part
-                adorn.Parent = part
+                adorn.ZIndex      = 6
+                adorn.Adornee     = part
+                adorn.Parent      = part
             end
-            adorn.Color3 = color
+            adorn.Color3       = color
             adorn.Transparency = opacity
         end
     end
@@ -423,8 +472,8 @@ local function doFling(targetsTable)
 
     local BV = Instance.new("BodyVelocity")
     BV.Parent   = RootPart
-    BV.Velocity = Vector3.new(0,0,0)
-    BV.MaxForce = Vector3.new(9e9,9e9,9e9)
+    BV.Velocity = Vector3.new(0, 0, 0)
+    BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
     Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
 
     local noclipLoop = RunService.Stepped:Connect(function()
@@ -439,7 +488,7 @@ local function doFling(targetsTable)
         if not RootPart or not Character then return end
         RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
         Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
-        RootPart.Velocity    = Vector3.new(9e7, 9e7*10, 9e7)
+        RootPart.Velocity    = Vector3.new(9e7, 9e7 * 10, 9e7)
         RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
     end
 
@@ -450,14 +499,14 @@ local function doFling(targetsTable)
             if RootPart and THumanoid and BasePart and BasePart.Parent then
                 if BasePart.Velocity.Magnitude < 50 then
                     Angle = Angle + 100
-                    FPos(BasePart, CFrame.new(0,1.5,0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude/1.25, CFrame.Angles(math.rad(Angle),0,0))
+                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
                     task.wait()
-                    FPos(BasePart, CFrame.new(0,-1.5,0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude/1.25, CFrame.Angles(math.rad(Angle),0,0))
+                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
                     task.wait()
                 else
-                    FPos(BasePart, CFrame.new(0,1.5,THumanoid.WalkSpeed), CFrame.Angles(math.rad(90),0,0))
+                    FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
                     task.wait()
-                    FPos(BasePart, CFrame.new(0,-1.5,-THumanoid.WalkSpeed), CFrame.Angles(0,0,0))
+                    FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
                     task.wait()
                 end
             else break end
@@ -486,14 +535,17 @@ local function doFling(targetsTable)
     if RootPart and Character then
         local st = tick()
         repeat
-            RootPart.CFrame = OldPos * CFrame.new(0,.5,0)
-            Character:SetPrimaryPartCFrame(OldPos * CFrame.new(0,.5,0))
+            RootPart.CFrame = OldPos * CFrame.new(0, .5, 0)
+            Character:SetPrimaryPartCFrame(OldPos * CFrame.new(0, .5, 0))
             if Humanoid then Humanoid:ChangeState("GettingUp") end
             for _, part in pairs(Character:GetChildren()) do
-                if part:IsA("BasePart") then part.Velocity = Vector3.new() part.RotVelocity = Vector3.new() end
+                if part:IsA("BasePart") then
+                    part.Velocity    = Vector3.new()
+                    part.RotVelocity = Vector3.new()
+                end
             end
             task.wait()
-        until (RootPart.Position - OldPos.Position).Magnitude < 25 or tick()-st > 2
+        until (RootPart.Position - OldPos.Position).Magnitude < 25 or tick() - st > 2
     end
     Workspace.FallenPartsDestroyHeight = FPDH
     isFlinging = false
@@ -503,18 +555,18 @@ end
 local function toggleKillEveryone()
     if killingEveryone then
         killingEveryone = false
-        CuteWare:Notify({Title="Status", Content="Kill Everyone Stopped", Duration=2})
+        CuteWare:Notify({ Title = "Status", Content = "Kill Everyone Stopped", Duration = 2 })
         return
     end
     local knife = getPlayerKnife()
-    if not knife then CuteWare:Notify({Title="Error", Content="You must have a knife!", Duration=3}) return end
+    if not knife then CuteWare:Notify({ Title = "Error", Content = "You must have a knife!", Duration = 3 }) return end
     killingEveryone = true
-    CuteWare:Notify({Title="Status", Content="Kill Everyone Started!", Duration=2})
+    CuteWare:Notify({ Title = "Status", Content = "Kill Everyone Started!", Duration = 2 })
     task.spawn(function()
         while killingEveryone do
             if _G.CuteWareScriptID ~= currentScriptID then break end
             knife = getPlayerKnife()
-            if not knife then killingEveryone=false CuteWare:Notify({Title="Aborted",Content="Knife lost!",Duration=3}) break end
+            if not knife then killingEveryone = false CuteWare:Notify({ Title = "Aborted", Content = "Knife lost!", Duration = 3 }) break end
             local targets = {}
             for _, p in ipairs(Players:GetPlayers()) do
                 if p ~= LocalPlayer then
@@ -526,11 +578,11 @@ local function toggleKillEveryone()
                     end
                 end
             end
-            if #targets == 0 then killingEveryone=false CuteWare:Notify({Title="Finished",Content="All players killed!",Duration=3}) break end
+            if #targets == 0 then killingEveryone = false CuteWare:Notify({ Title = "Finished", Content = "All players killed!", Duration = 3 }) break end
             for _, p in ipairs(targets) do
                 if not killingEveryone or _G.CuteWareScriptID ~= currentScriptID then break end
                 knife = getPlayerKnife()
-                if not knife then killingEveryone=false CuteWare:Notify({Title="Aborted",Content="Knife disappeared!",Duration=3}) break end
+                if not knife then killingEveryone = false CuteWare:Notify({ Title = "Aborted", Content = "Knife disappeared!", Duration = 3 }) break end
                 local char = p.Character
                 local root = char and char:FindFirstChild("HumanoidRootPart")
                 local hum  = char and char:FindFirstChildOfClass("Humanoid")
@@ -538,9 +590,9 @@ local function toggleKillEveryone()
                     local myChar = LocalPlayer.Character
                     local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
                     if myRoot then
-                        myRoot.CFrame = root.CFrame * CFrame.new(0,0,0.8)
+                        myRoot.CFrame = root.CFrame * CFrame.new(0, 0, 0.8)
                         if knife.Parent == LocalPlayer.Backpack then knife.Parent = myChar end
-                        for i=1,4 do knife:Activate() task.wait(0.02) end
+                        for i = 1, 4 do knife:Activate() task.wait(0.02) end
                     end
                     task.wait(0.05)
                 end
@@ -552,12 +604,12 @@ end
 
 local function toggleShootMurderer()
     if shootingMurderer then
-        shootingMurderer=false isAimingPressed=false
-        CuteWare:Notify({Title="Status",Content="Shoot Murderer Stopped",Duration=2})
+        shootingMurderer = false isAimingPressed = false
+        CuteWare:Notify({ Title = "Status", Content = "Shoot Murderer Stopped", Duration = 2 })
         return
     end
-    shootingMurderer=true isAimingPressed=true
-    CuteWare:Notify({Title="Status",Content="Shooting Murderer...",Duration=2})
+    shootingMurderer = true isAimingPressed = true
+    CuteWare:Notify({ Title = "Status", Content = "Shooting Murderer...", Duration = 2 })
     task.spawn(function()
         local myChar = LocalPlayer.Character
         local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
@@ -574,13 +626,13 @@ local function toggleShootMurderer()
                 end
             end
             if not murderer then
-                shootingMurderer=false isAimingPressed=false
-                if myRoot and origCF then myRoot.CFrame=origCF end
-                CuteWare:Notify({Title="Finished",Content="Murderer dead or not found",Duration=3})
+                shootingMurderer = false isAimingPressed = false
+                if myRoot and origCF then myRoot.CFrame = origCF end
+                CuteWare:Notify({ Title = "Finished", Content = "Murderer dead or not found", Duration = 3 })
                 break
             end
-            myChar  = LocalPlayer.Character
-            myRoot  = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            myChar = LocalPlayer.Character
+            myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
             local mudRoot = murderer:FindFirstChild("HumanoidRootPart")
             if myRoot and mudRoot then
                 local tp = mudRoot.Position - (mudRoot.CFrame.LookVector * 2.5)
@@ -592,8 +644,8 @@ local function toggleShootMurderer()
                     gun:Activate()
                     task.wait(0.4)
                     if myRoot and origCF then myRoot.CFrame = origCF end
-                    shootingMurderer=false isAimingPressed=false
-                    CuteWare:Notify({Title="Success",Content="Shot fired!",Duration=3})
+                    shootingMurderer = false isAimingPressed = false
+                    CuteWare:Notify({ Title = "Success", Content = "Shot fired!", Duration = 3 })
                     break
                 end
             end
@@ -603,28 +655,29 @@ local function toggleShootMurderer()
 end
 
 local function toggleKillSheriff()
-    if killingSheriff then killingSheriff=false CuteWare:Notify({Title="Status",Content="Kill Sheriff Stopped",Duration=2}) return end
+    if killingSheriff then killingSheriff = false CuteWare:Notify({ Title = "Status", Content = "Kill Sheriff Stopped", Duration = 2 }) return end
     local knife = getPlayerKnife()
-    if not knife then CuteWare:Notify({Title="Error",Content="You must have a knife!",Duration=3}) return end
-    killingSheriff=true CuteWare:Notify({Title="Status",Content="Kill Sheriff Started",Duration=2})
+    if not knife then CuteWare:Notify({ Title = "Error", Content = "You must have a knife!", Duration = 3 }) return end
+    killingSheriff = true CuteWare:Notify({ Title = "Status", Content = "Kill Sheriff Started", Duration = 2 })
     task.spawn(function()
         while killingSheriff do
             if _G.CuteWareScriptID ~= currentScriptID then break end
             knife = getPlayerKnife()
-            if not knife then killingSheriff=false CuteWare:Notify({Title="Aborted",Content="Knife lost!",Duration=3}) break end
+            if not knife then killingSheriff = false CuteWare:Notify({ Title = "Aborted", Content = "Knife lost!", Duration = 3 }) break end
             local sheriff = nil
             for _, p in ipairs(Players:GetPlayers()) do
-                if p ~= LocalPlayer and playerRoles[p]=="Sheriff" and p.Character then
-                    local hum=p.Character:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health>0 and p.Character:FindFirstChild("HumanoidRootPart") then sheriff=p.Character break end
+                if p ~= LocalPlayer and playerRoles[p] == "Sheriff" and p.Character then
+                    local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health > 0 and p.Character:FindFirstChild("HumanoidRootPart") then sheriff = p.Character break end
                 end
             end
-            if not sheriff then killingSheriff=false CuteWare:Notify({Title="Finished",Content="Sheriff dead or not found",Duration=3}) break end
-            local myChar=LocalPlayer.Character local myRoot=myChar and myChar:FindFirstChild("HumanoidRootPart")
-            local shRoot=sheriff:FindFirstChild("HumanoidRootPart")
+            if not sheriff then killingSheriff = false CuteWare:Notify({ Title = "Finished", Content = "Sheriff dead or not found", Duration = 3 }) break end
+            local myChar = LocalPlayer.Character
+            local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local shRoot = sheriff:FindFirstChild("HumanoidRootPart")
             if myRoot and shRoot then
-                myRoot.CFrame=CFrame.lookAt(shRoot.Position-(shRoot.CFrame.LookVector*1), shRoot.Position)
-                if knife.Parent==LocalPlayer.Backpack then knife.Parent=myChar end
+                myRoot.CFrame = CFrame.lookAt(shRoot.Position - (shRoot.CFrame.LookVector * 1), shRoot.Position)
+                if knife.Parent == LocalPlayer.Backpack then knife.Parent = myChar end
                 knife:Activate()
             end
             task.wait()
@@ -633,31 +686,32 @@ local function toggleKillSheriff()
 end
 
 local function toggleKillPlayer()
-    if killingPlayer then killingPlayer=false CuteWare:Notify({Title="Status",Content="Kill Player Stopped",Duration=2}) return end
-    if killPlayerTargetName=="" then CuteWare:Notify({Title="Error",Content="Enter player name first!",Duration=3}) return end
-    local knife=getPlayerKnife()
-    if not knife then CuteWare:Notify({Title="Error",Content="You must have a knife!",Duration=3}) return end
-    killingPlayer=true CuteWare:Notify({Title="Status",Content="Targeting: "..killPlayerTargetName,Duration=2})
+    if killingPlayer then killingPlayer = false CuteWare:Notify({ Title = "Status", Content = "Kill Player Stopped", Duration = 2 }) return end
+    if killPlayerTargetName == "" then CuteWare:Notify({ Title = "Error", Content = "Enter player name first!", Duration = 3 }) return end
+    local knife = getPlayerKnife()
+    if not knife then CuteWare:Notify({ Title = "Error", Content = "You must have a knife!", Duration = 3 }) return end
+    killingPlayer = true CuteWare:Notify({ Title = "Status", Content = "Targeting: " .. killPlayerTargetName, Duration = 2 })
     task.spawn(function()
         while killingPlayer do
             if _G.CuteWareScriptID ~= currentScriptID then break end
-            knife=getPlayerKnife()
-            if not knife then killingPlayer=false CuteWare:Notify({Title="Aborted",Content="Knife lost!",Duration=3}) break end
-            local tp=nil
+            knife = getPlayerKnife()
+            if not knife then killingPlayer = false CuteWare:Notify({ Title = "Aborted", Content = "Knife lost!", Duration = 3 }) break end
+            local tp = nil
             for _, p in ipairs(Players:GetPlayers()) do
-                if p~=LocalPlayer and (string.find(string.lower(p.Name),string.lower(killPlayerTargetName)) or string.find(string.lower(p.DisplayName),string.lower(killPlayerTargetName))) then
+                if p ~= LocalPlayer and (string.find(string.lower(p.Name), string.lower(killPlayerTargetName)) or string.find(string.lower(p.DisplayName), string.lower(killPlayerTargetName))) then
                     if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-                        local hum=p.Character:FindFirstChildOfClass("Humanoid")
-                        if hum and hum.Health>0 then tp=p.Character break end
+                        local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 then tp = p.Character break end
                     end
                 end
             end
-            if not tp then killingPlayer=false CuteWare:Notify({Title="Finished",Content="Target dead or left",Duration=3}) break end
-            local myChar=LocalPlayer.Character local myRoot=myChar and myChar:FindFirstChild("HumanoidRootPart")
-            local tRoot=tp:FindFirstChild("HumanoidRootPart")
+            if not tp then killingPlayer = false CuteWare:Notify({ Title = "Finished", Content = "Target dead or left", Duration = 3 }) break end
+            local myChar = LocalPlayer.Character
+            local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local tRoot  = tp:FindFirstChild("HumanoidRootPart")
             if myRoot and tRoot then
-                myRoot.CFrame=CFrame.lookAt(tRoot.Position-(tRoot.CFrame.LookVector*1),tRoot.Position)
-                if knife.Parent==LocalPlayer.Backpack then knife.Parent=myChar end
+                myRoot.CFrame = CFrame.lookAt(tRoot.Position - (tRoot.CFrame.LookVector * 1), tRoot.Position)
+                if knife.Parent == LocalPlayer.Backpack then knife.Parent = myChar end
                 knife:Activate()
             end
             task.wait()
@@ -665,26 +719,17 @@ local function toggleKillPlayer()
     end)
 end
 
-local function findGunDrop()
-    for _, desc in ipairs(Workspace:GetDescendants()) do
-        if desc:IsA("BasePart") and (desc.Name=="GunDrop" or desc.Name=="Gun_Drop" or (desc.Name=="Gun" and not desc.Parent:IsA("Model") and not desc.Parent:IsA("Backpack"))) then
-            return desc
-        end
-    end
-    return nil
-end
-
 local function grabDroppedGunAction()
-    local gun=findGunDrop()
+    local gun = findGunDrop()
     if gun and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-        LocalPlayer.Character.HumanoidRootPart.CFrame=gun.CFrame+Vector3.new(0,2,0)
-        CuteWare:Notify({Title="Success",Content="Teleported to Dropped Gun!",Duration=2})
+        LocalPlayer.Character.HumanoidRootPart.CFrame = gun.CFrame + Vector3.new(0, 2, 0)
+        CuteWare:Notify({ Title = "Success", Content = "Teleported to Dropped Gun!", Duration = 2 })
     else
-        CuteWare:Notify({Title="Error",Content="Gun is not dropped!",Duration=2})
+        CuteWare:Notify({ Title = "Error", Content = "Gun is not dropped!", Duration = 2 })
     end
 end
 
--- ===================== PLAYER DROPDOWN (fix: rebuild instead of Refresh) =====================
+-- ===================== PLAYER DROPDOWN =====================
 local function getPlayerOptions()
     local opts = {}
     for _, p in ipairs(Players:GetPlayers()) do
@@ -694,11 +739,8 @@ local function getPlayerOptions()
     return opts
 end
 
--- We store references to sections so we can rebuild dropdowns inside them
-local flingDropdownRef      = nil
-local whitelistDropdownRef  = nil
-local flingSection          = nil
-local whitelistSection      = nil
+local flingDropdownRef     = nil
+local whitelistDropdownRef = nil
 
 local rebuildPending = false
 local function rebuildPlayerDropdowns()
@@ -707,12 +749,9 @@ local function rebuildPlayerDropdowns()
     task.delay(0.5, function()
         rebuildPending = false
         local opts = getPlayerOptions()
-
-        -- Rebuild fling dropdown
         if flingDropdownRef and flingDropdownRef.Refresh then
             pcall(function() flingDropdownRef:Refresh(opts) end)
         end
-        -- Rebuild whitelist dropdown
         if whitelistDropdownRef and whitelistDropdownRef.Refresh then
             pcall(function() whitelistDropdownRef:Refresh(opts) end)
         end
@@ -720,103 +759,102 @@ local function rebuildPlayerDropdowns()
 end
 
 -- ===================== TABS =====================
-local MainTab = Window:CreateTab({ Name="Main", Icon=123456789 })
+local MainTab = Window:CreateTab({ Name = "Main", Icon = 123456789 })
 
 local InnocentSection = MainTab:CreateSection("Innocent")
 
-InnocentSection:CreateButton({ Name="Crash Murderer", Callback=function()
-    local t={}
-    for _,p in ipairs(Players:GetPlayers()) do if p~=LocalPlayer and playerRoles[p]=="Murderer" then table.insert(t,p.Name) end end
-    if #t>0 then doFling(t) else CuteWare:Notify({Title="Error",Content="Murderer not found!",Duration=3}) end
+InnocentSection:CreateButton({ Name = "Crash Murderer", Callback = function()
+    local t = {}
+    for _, p in ipairs(Players:GetPlayers()) do if p ~= LocalPlayer and playerRoles[p] == "Murderer" then table.insert(t, p.Name) end end
+    if #t > 0 then doFling(t) else CuteWare:Notify({ Title = "Error", Content = "Murderer not found!", Duration = 3 }) end
 end })
 
-InnocentSection:CreateButton({ Name="Crash Sheriff", Callback=function()
-    local t={}
-    for _,p in ipairs(Players:GetPlayers()) do if p~=LocalPlayer and playerRoles[p]=="Sheriff" then table.insert(t,p.Name) end end
-    if #t>0 then doFling(t) else CuteWare:Notify({Title="Error",Content="Sheriff not found!",Duration=3}) end
+InnocentSection:CreateButton({ Name = "Crash Sheriff", Callback = function()
+    local t = {}
+    for _, p in ipairs(Players:GetPlayers()) do if p ~= LocalPlayer and playerRoles[p] == "Sheriff" then table.insert(t, p.Name) end end
+    if #t > 0 then doFling(t) else CuteWare:Notify({ Title = "Error", Content = "Sheriff not found!", Duration = 3 }) end
 end })
 
-InnocentSection:CreateToggle({ Name="View Dropped Gun", Flag="View_Dropped_Gun", CurrentValue=false, Callback=function(s) _G.ViewDroppedGunEnabled=s end })
-InnocentSection:CreateToggle({ Name="Auto Grab Gun",    Flag="Auto_Grab_Gun",    CurrentValue=false, Callback=function(s) _G.AutoGrabGunEnabled=s  end })
-InnocentSection:CreateButton({ Name="Grab Gun",         Callback=function() grabDroppedGunAction() end })
-InnocentSection:CreateKeybind({ Name="Grab Gun Keybind", CurrentKeybind=Enum.KeyCode.G, Flag="Grab_Gun_Keybind", Callback=function() end, Pressed=function() grabDroppedGunAction() end })
+InnocentSection:CreateToggle({ Name = "View Dropped Gun", Flag = "View_Dropped_Gun", CurrentValue = false, Callback = function(s) _G.ViewDroppedGunEnabled = s end })
+InnocentSection:CreateToggle({ Name = "Auto Grab Gun",    Flag = "Auto_Grab_Gun",    CurrentValue = false, Callback = function(s) _G.AutoGrabGunEnabled = s  end })
+InnocentSection:CreateButton({ Name = "Grab Gun", Callback = function() grabDroppedGunAction() end })
+InnocentSection:CreateKeybind({ Name = "Grab Gun Keybind", CurrentKeybind = Enum.KeyCode.G, Flag = "Grab_Gun_Keybind", Callback = function() end, Pressed = function() grabDroppedGunAction() end })
 
 local GunStatusLabel = InnocentSection:CreateLabel("❌ Gun Status : Not Dropped")
 
 local SheriffSection = MainTab:CreateSection("Sheriff")
 
-SheriffSection:CreateToggle({ Name="Turn On Aimbot", Flag="Sheriff_Aimbot_Toggle", CurrentValue=false, Callback=function(s)
-    aimbotEnabled=s
-    if not s then LocalPlayer.CameraMode=Enum.CameraMode.Classic end
+SheriffSection:CreateToggle({ Name = "Turn On Aimbot", Flag = "Sheriff_Aimbot_Toggle", CurrentValue = false, Callback = function(s)
+    aimbotEnabled = s
+    if not s then LocalPlayer.CameraMode = Enum.CameraMode.Classic end
 end })
 
-SheriffSection:CreateDropdown({ Name="Aimbot Mode", Mode="single", Options={"Hold","Toggle"}, CurrentOption="Hold", Flag="Aimbotting_Mode", Callback=function(s)
-    aimbotMode=s isAimingPressed=false LocalPlayer.CameraMode=Enum.CameraMode.Classic
+SheriffSection:CreateDropdown({ Name = "Aimbot Mode", Mode = "single", Options = { "Hold", "Toggle" }, CurrentOption = "Hold", Flag = "Aimbotting_Mode", Callback = function(s)
+    aimbotMode = s isAimingPressed = false LocalPlayer.CameraMode = Enum.CameraMode.Classic
 end })
 
-SheriffSection:CreateKeybind({ Name="Aimbot Keybind", CurrentKeybind=Enum.KeyCode.F, Flag="MyKeybind", Callback=function(k) aimbotKey=k end })
-SheriffSection:CreateSlider({ Name="Aiming Smoothness", Range={0,10}, Increment=1, CurrentValue=0, Flag="Aiming_Smoothness", Callback=function(v) aimbotSmoothness=v end })
-SheriffSection:CreateDropdown({ Name="Locking Mode", Mode="single", Options={"Camera"}, CurrentOption="Camera", Flag="Locking_Mode", Callback=function(s) lockingMode=s end })
-SheriffSection:CreateDropdown({ Name="Camera Mode", Mode="single", Options={"3rd Person","First Person"}, CurrentOption="First Person", Flag="AimCamera_Mode", Callback=function(s)
-    cameraModeSetting=s
-    if s~="First Person" then LocalPlayer.CameraMode=Enum.CameraMode.Classic end
+SheriffSection:CreateKeybind({ Name = "Aimbot Keybind", CurrentKeybind = Enum.KeyCode.F, Flag = "MyKeybind", Callback = function(k) aimbotKey = k end })
+SheriffSection:CreateSlider({ Name = "Aiming Smoothness", Range = { 0, 10 }, Increment = 1, CurrentValue = 0, Flag = "Aiming_Smoothness", Callback = function(v) aimbotSmoothness = v end })
+SheriffSection:CreateDropdown({ Name = "Locking Mode", Mode = "single", Options = { "Camera" }, CurrentOption = "Camera", Flag = "Locking_Mode", Callback = function(s) lockingMode = s end })
+SheriffSection:CreateDropdown({ Name = "Camera Mode", Mode = "single", Options = { "3rd Person", "First Person" }, CurrentOption = "First Person", Flag = "AimCamera_Mode", Callback = function(s)
+    cameraModeSetting = s
+    if s ~= "First Person" then LocalPlayer.CameraMode = Enum.CameraMode.Classic end
 end })
-SheriffSection:CreateButton({ Name="Shoot Murderer", Callback=function() toggleShootMurderer() end })
-SheriffSection:CreateKeybind({ Name="Shoot Murderer Keybind", CurrentKeybind=Enum.KeyCode.C, Flag="Shoot_MurdererKey_bind", Callback=function() end, Pressed=function() toggleShootMurderer() end })
-SheriffSection:CreateDropdown({ Name="Shoot Side", Mode="single", Options={"From Back","Above Head"}, CurrentOption="From Back", Flag="Shoot_Side", Callback=function(s) shootSideSetting=s end })
+SheriffSection:CreateButton({ Name = "Shoot Murderer", Callback = function() toggleShootMurderer() end })
+SheriffSection:CreateKeybind({ Name = "Shoot Murderer Keybind", CurrentKeybind = Enum.KeyCode.C, Flag = "Shoot_MurdererKey_bind", Callback = function() end, Pressed = function() toggleShootMurderer() end })
+SheriffSection:CreateDropdown({ Name = "Shoot Side", Mode = "single", Options = { "From Back", "Above Head" }, CurrentOption = "From Back", Flag = "Shoot_Side", Callback = function(s) shootSideSetting = s end })
 
 local MurdererSection = MainTab:CreateSection("Murderer")
-MurdererSection:CreateButton({ Name="Kill Sheriff",  Callback=function() toggleKillSheriff() end })
-MurdererSection:CreateButton({ Name="Kill Everyone", Callback=function() toggleKillEveryone() end })
-MurdererSection:CreateKeybind({ Name="Kill Everyone Keybind", CurrentKeybind=Enum.KeyCode.K, Flag="KillEveryoneKeybind", Callback=function() end, Pressed=function() toggleKillEveryone() end })
+MurdererSection:CreateButton({ Name = "Kill Sheriff",  Callback = function() toggleKillSheriff() end })
+MurdererSection:CreateButton({ Name = "Kill Everyone", Callback = function() toggleKillEveryone() end })
+MurdererSection:CreateKeybind({ Name = "Kill Everyone Keybind", CurrentKeybind = Enum.KeyCode.K, Flag = "KillEveryoneKeybind", Callback = function() end, Pressed = function() toggleKillEveryone() end })
 
 whitelistDropdownRef = MurdererSection:CreateDropdown({
-    Name="Kill Everyone Whitelist", Mode="multi",
-    Options=getPlayerOptions(), CurrentOption={},
-    Flag="Kill_Everyone_Whitelist",
-    Callback=function(s) killEveryoneWhitelist=s end
+    Name = "Kill Everyone Whitelist", Mode = "multi",
+    Options = getPlayerOptions(), CurrentOption = {},
+    Flag = "Kill_Everyone_Whitelist",
+    Callback = function(s) killEveryoneWhitelist = s end
 })
 
-MurdererSection:CreateTextbox({ Name="Kill Player", PlaceholderText="Enter player name...", CurrentValue="", Flag="KillPlayer", Callback=function(t,e)
-    killPlayerTargetName=t if e then toggleKillPlayer() end
+MurdererSection:CreateTextbox({ Name = "Kill Player", PlaceholderText = "Enter player name...", CurrentValue = "", Flag = "KillPlayer", Callback = function(t, e)
+    killPlayerTargetName = t if e then toggleKillPlayer() end
 end })
 
 -- ===================== VISUALS TAB =====================
-local VisualsTab = Window:CreateTab({ Name="Visuals", Icon=123456789 })
+local VisualsTab = Window:CreateTab({ Name = "Visuals", Icon = 123456789 })
 
 local EspSection = VisualsTab:CreateSection("Esp")
-EspSection:CreateToggle({ Name="Innocent ESP",  Flag="InnoEspToggle",    CurrentValue=false, Callback=function(s) innoEsp=s    end })
-EspSection:CreateToggle({ Name="Sheriff ESP",   Flag="SheriffEspToggle", CurrentValue=false, Callback=function(s) sheriffEsp=s end })
-EspSection:CreateToggle({ Name="Murderer ESP",  Flag="MurdEspToggle",    CurrentValue=false, Callback=function(s) murdEsp=s    end })
+EspSection:CreateToggle({ Name = "Innocent ESP",  Flag = "InnoEspToggle",    CurrentValue = false, Callback = function(s) innoEsp    = s end })
+EspSection:CreateToggle({ Name = "Sheriff ESP",   Flag = "SheriffEspToggle", CurrentValue = false, Callback = function(s) sheriffEsp = s end })
+EspSection:CreateToggle({ Name = "Murderer ESP",  Flag = "MurdEspToggle",    CurrentValue = false, Callback = function(s) murdEsp    = s end })
 
 local ChamsSection = VisualsTab:CreateSection("Chams")
-ChamsSection:CreateToggle({ Name="Innocent Chams", Flag="InnoChamsToggle",    CurrentValue=false, Callback=function(s) innoChams=s   if not s then for _,p in ipairs(Players:GetPlayers()) do if p.Character then clearChams(p.Character) end end end end })
-ChamsSection:CreateToggle({ Name="Sheriff Chams",  Flag="SheriffChamsToggle", CurrentValue=false, Callback=function(s) sheriffChams=s if not s then for _,p in ipairs(Players:GetPlayers()) do if p.Character then clearChams(p.Character) end end end end })
-ChamsSection:CreateToggle({ Name="Murderer Chams", Flag="MurdChamsToggle",    CurrentValue=false, Callback=function(s) murdChams=s   if not s then for _,p in ipairs(Players:GetPlayers()) do if p.Character then clearChams(p.Character) end end end end })
-ChamsSection:CreateToggle({ Name="Coins Chams",    Flag="CoinsChamsToggle",   CurrentValue=false, Callback=function(s)
-    coinsChams=s
-    if not s then for _,c in ipairs(Workspace:GetDescendants()) do if c.Name=="CuteWareCoinChams" then pcall(function() c:Destroy() end) end end end
+ChamsSection:CreateToggle({ Name = "Innocent Chams", Flag = "InnoChamsToggle",    CurrentValue = false, Callback = function(s) innoChams   = s if not s then for _, p in ipairs(Players:GetPlayers()) do if p.Character then clearChams(p.Character) end end end end })
+ChamsSection:CreateToggle({ Name = "Sheriff Chams",  Flag = "SheriffChamsToggle", CurrentValue = false, Callback = function(s) sheriffChams = s if not s then for _, p in ipairs(Players:GetPlayers()) do if p.Character then clearChams(p.Character) end end end end })
+ChamsSection:CreateToggle({ Name = "Murderer Chams", Flag = "MurdChamsToggle",    CurrentValue = false, Callback = function(s) murdChams   = s if not s then for _, p in ipairs(Players:GetPlayers()) do if p.Character then clearChams(p.Character) end end end end })
+ChamsSection:CreateToggle({ Name = "Coins Chams",    Flag = "CoinsChamsToggle",   CurrentValue = false, Callback = function(s)
+    coinsChams = s
+    if not s then for _, c in ipairs(Workspace:GetDescendants()) do if c.Name == "CuteWareCoinChams" then c:Destroy() end end end
 end })
-ChamsSection:CreateSlider({ Name="Chams Opacity", Range={0,100}, Increment=1, CurrentValue=30, Flag="ChamsOpacity", Callback=function(v) chamsOpacityValue=1-(v/100) end })
+ChamsSection:CreateSlider({ Name = "Chams Opacity", Range = { 0, 100 }, Increment = 1, CurrentValue = 30, Flag = "ChamsOpacity", Callback = function(v) chamsOpacityValue = 1 - (v / 100) end })
 
 local ChatSection = VisualsTab:CreateSection("Chat")
-ChatSection:CreateButton({ Name="Unlock Dead Chat", Callback=function() end })
+ChatSection:CreateButton({ Name = "Unlock Dead Chat", Callback = function() end })
 
 -- ===================== PLAYER TAB =====================
-local PlayerTab    = Window:CreateTab({ Name="Player", Icon=123456789 })
+local PlayerTab    = Window:CreateTab({ Name = "Player", Icon = 123456789 })
 local FlingSection = PlayerTab:CreateSection("Fling")
 
 flingDropdownRef = FlingSection:CreateDropdown({
-    Name="Players to Fling", Mode="multi",
-    Options=getPlayerOptions(), CurrentOption={},
-    Flag="Players_to_Fling",
-    Callback=function(s) selectedPlayers=s end
+    Name = "Players to Fling", Mode = "multi",
+    Options = getPlayerOptions(), CurrentOption = {},
+    Flag = "Players_to_Fling",
+    Callback = function(s) selectedPlayers = s end
 })
 
-FlingSection:CreateButton({ Name="Fling Chosen Players", Callback=function() doFling(selectedPlayers) end })
-FlingSection:CreateToggle({ Name="Toggle Anti Fling", Flag="Anti_Fling", CurrentValue=false, Callback=function(s) antiFlingEnabled=s end })
+FlingSection:CreateButton({ Name = "Fling Chosen Players", Callback = function() doFling(selectedPlayers) end })
+FlingSection:CreateToggle({ Name = "Toggle Anti Fling", Flag = "Anti_Fling", CurrentValue = false, Callback = function(s) antiFlingEnabled = s end })
 
--- Player join / leave / death → rebuild dropdowns
 regConn(Players.PlayerAdded:Connect(function(player)
     rebuildPlayerDropdowns()
     player.CharacterAdded:Connect(function(char)
@@ -846,233 +884,231 @@ end
 
 local PlayerModsSection = PlayerTab:CreateSection("Player Mods")
 
-PlayerModsSection:CreateToggle({ Name="Toggle Fly", Flag="FlyToggle", CurrentValue=false, Callback=function(state)
-    flyEnabled=state
+PlayerModsSection:CreateToggle({ Name = "Toggle Fly", Flag = "FlyToggle", CurrentValue = false, Callback = function(state)
+    flyEnabled = state
     if flyEnabled then
-        local character=LocalPlayer.Character
-        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local character = LocalPlayer.Character
+        local root      = character and character:FindFirstChild("HumanoidRootPart")
         if root then
-            bodyVelocity=Instance.new("BodyVelocity") bodyVelocity.MaxForce=Vector3.new(1e5,1e5,1e5) bodyVelocity.Velocity=Vector3.new(0,0,0) bodyVelocity.Parent=root
-            bodyGyro=Instance.new("BodyGyro") bodyGyro.MaxTorque=Vector3.new(1e5,1e5,1e5) bodyGyro.CFrame=root.CFrame bodyGyro.Parent=root
-            flyConnection=RunService.RenderStepped:Connect(function()
-                local hum=character and character:FindFirstChildOfClass("Humanoid")
-                if hum then hum.PlatformStand=true end
-                local cam=Workspace.CurrentCamera.CFrame
-                local dir=Vector3.new(0,0,0)
-                if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir=dir+cam.LookVector end
-                if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir=dir-cam.LookVector end
-                if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir=dir-cam.RightVector end
-                if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir=dir+cam.RightVector end
-                if UserInputService:IsKeyDown(Enum.KeyCode.Space) then dir=dir+Vector3.new(0,1,0) end
-                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir=dir-Vector3.new(0,1,0) end
-                if dir.Magnitude>0 then bodyVelocity.Velocity=dir.Unit*(flySpeed*25) else bodyVelocity.Velocity=Vector3.new(0,0,0) end
-                bodyGyro.CFrame=cam
+            bodyVelocity           = Instance.new("BodyVelocity")
+            bodyVelocity.MaxForce  = Vector3.new(1e5, 1e5, 1e5)
+            bodyVelocity.Velocity  = Vector3.new(0, 0, 0)
+            bodyVelocity.Parent    = root
+            bodyGyro               = Instance.new("BodyGyro")
+            bodyGyro.MaxTorque     = Vector3.new(1e5, 1e5, 1e5)
+            bodyGyro.CFrame        = root.CFrame
+            bodyGyro.Parent        = root
+            flyConnection = RunService.RenderStepped:Connect(function()
+                local hum = character and character:FindFirstChildOfClass("Humanoid")
+                if hum then hum.PlatformStand = true end
+                local cam = Workspace.CurrentCamera.CFrame
+                local dir = Vector3.new(0, 0, 0)
+                if UserInputService:IsKeyDown(Enum.KeyCode.W)         then dir = dir + cam.LookVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.S)         then dir = dir - cam.LookVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.A)         then dir = dir - cam.RightVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.D)         then dir = dir + cam.RightVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.Space)     then dir = dir + Vector3.new(0, 1, 0) end
+                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then dir = dir - Vector3.new(0, 1, 0) end
+                if dir.Magnitude > 0 then bodyVelocity.Velocity = dir.Unit * (flySpeed * 25)
+                else bodyVelocity.Velocity = Vector3.new(0, 0, 0) end
+                bodyGyro.CFrame = cam
             end)
             regConn(flyConnection)
         end
     else
-        if flyConnection then flyConnection:Disconnect() end
-        if bodyVelocity then bodyVelocity:Destroy() end
-        if bodyGyro then bodyGyro:Destroy() end
-        local hum=LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if hum then hum.PlatformStand=false end
+        if flyConnection  then flyConnection:Disconnect() end
+        if bodyVelocity   then bodyVelocity:Destroy() end
+        if bodyGyro       then bodyGyro:Destroy() end
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.PlatformStand = false end
     end
 end })
 
-PlayerModsSection:CreateSlider({ Name="Fly Speed", Range={0,10}, Increment=1, CurrentValue=1, Flag="Fly_Speed", Callback=function(v) flySpeed=v end })
-PlayerModsSection:CreateToggle({ Name="Toggle Click TP", Flag="ClickTpToggle", CurrentValue=false, Callback=function(s) clickTpEnabled=s end })
+PlayerModsSection:CreateSlider({ Name = "Fly Speed", Range = { 0, 10 }, Increment = 1, CurrentValue = 1, Flag = "Fly_Speed", Callback = function(v) flySpeed = v end })
+PlayerModsSection:CreateToggle({ Name = "Toggle Click TP", Flag = "ClickTpToggle", CurrentValue = false, Callback = function(s) clickTpEnabled = s end })
 PlayerModsSection:CreateLabel("🌸 Note : Hold LCtrl And Press LMB to TP")
-PlayerModsSection:CreateToggle({ Name="Toggle Noclip", Flag="Noclip", CurrentValue=false, Callback=function(s)
-    noclipEnabled=s
+PlayerModsSection:CreateToggle({ Name = "Toggle Noclip", Flag = "Noclip", CurrentValue = false, Callback = function(s)
+    noclipEnabled = s
     if not s and LocalPlayer.Character then
-        for _,part in ipairs(LocalPlayer.Character:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide=true end end
+        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do if part:IsA("BasePart") then part.CanCollide = true end end
     end
 end })
-PlayerModsSection:CreateToggle({ Name="Toggle Inf Jump", Flag="Inf_Jump", CurrentValue=false, Callback=function(s) infJumpEnabled=s end })
-PlayerModsSection:CreateToggle({ Name="Set Custom Walkspeed", Flag="Custom_Walkspeed", CurrentValue=false, Callback=function(s)
-    walkspeedEnabled=s
-    if not s then local hum=LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") if hum then hum.WalkSpeed=16 end end
+PlayerModsSection:CreateToggle({ Name = "Toggle Inf Jump", Flag = "Inf_Jump", CurrentValue = false, Callback = function(s) infJumpEnabled = s end })
+PlayerModsSection:CreateToggle({ Name = "Set Custom Walkspeed", Flag = "Custom_Walkspeed", CurrentValue = false, Callback = function(s)
+    walkspeedEnabled = s
+    if not s then local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") if hum then hum.WalkSpeed = 16 end end
 end })
-PlayerModsSection:CreateSlider({ Name="Walkspeed", Range={16,300}, Increment=1, CurrentValue=16, Flag="Speed_Changer", Callback=function(v) walkspeedValue=v end })
-PlayerModsSection:CreateToggle({ Name="Set Custom Jumppower", Flag="Custom_Jumppower", CurrentValue=false, Callback=function(s)
-    jumppowerEnabled=s
-    if not s then local hum=LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") if hum then hum.JumpPower=50 end end
+PlayerModsSection:CreateSlider({ Name = "Walkspeed", Range = { 16, 300 }, Increment = 1, CurrentValue = 16, Flag = "Speed_Changer", Callback = function(v) walkspeedValue = v end })
+PlayerModsSection:CreateToggle({ Name = "Set Custom Jumppower", Flag = "Custom_Jumppower", CurrentValue = false, Callback = function(s)
+    jumppowerEnabled = s
+    if not s then local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") if hum then hum.JumpPower = 50 end end
 end })
-PlayerModsSection:CreateSlider({ Name="Jumppower", Range={50,300}, Increment=1, CurrentValue=50, Flag="Power_Changer", Callback=function(v) jumppowerValue=v end })
+PlayerModsSection:CreateSlider({ Name = "Jumppower", Range = { 50, 300 }, Increment = 1, CurrentValue = 50, Flag = "Power_Changer", Callback = function(v) jumppowerValue = v end })
 
 local ToolsSection = PlayerTab:CreateSection("Tools")
 
 local function applyXRay(v)
     if v:IsA("BasePart") and not originalTransparencies[v] then
-        if v.Transparency>0 then return end
+        if v.Transparency > 0 then return end
         if v:FindFirstAncestorOfClass("Tool") then return end
-        for _,p in ipairs(Players:GetPlayers()) do if p.Character and v:IsDescendantOf(p.Character) then return end end
-        originalTransparencies[v]=v.Transparency
-        v.Transparency=0.9
+        for _, p in ipairs(Players:GetPlayers()) do if p.Character and v:IsDescendantOf(p.Character) then return end end
+        originalTransparencies[v] = v.Transparency
+        v.Transparency = 0.9
     end
 end
 
-ToolsSection:CreateToggle({ Name="Toggle XRay", Flag="XRayToggle", CurrentValue=false, Callback=function(s)
+ToolsSection:CreateToggle({ Name = "Toggle XRay", Flag = "XRayToggle", CurrentValue = false, Callback = function(s)
     if s then
-        for _,v in ipairs(Workspace:GetDescendants()) do applyXRay(v) end
-        descendantConnection=Workspace.DescendantAdded:Connect(function(v) applyXRay(v) end)
+        for _, v in ipairs(Workspace:GetDescendants()) do applyXRay(v) end
+        descendantConnection = Workspace.DescendantAdded:Connect(function(v) applyXRay(v) end)
         regConn(descendantConnection)
     else
-        if descendantConnection then descendantConnection:Disconnect() descendantConnection=nil end
-        for part,orig in pairs(originalTransparencies) do if part and part.Parent then part.Transparency=orig end end
+        if descendantConnection then descendantConnection:Disconnect() descendantConnection = nil end
+        for part, orig in pairs(originalTransparencies) do if part and part.Parent then part.Transparency = orig end end
         table.clear(originalTransparencies)
     end
 end })
-ToolsSection:CreateToggle({ Name="Toggle Anti Void", Flag="Anti_Void", CurrentValue=false, Callback=function(s) antiVoidEnabled=s end })
-ToolsSection:CreateToggle({ Name="Toggle Low GFX", Flag="Low_GFX", CurrentValue=false, Callback=function(s)
-    lowGfxEnabled=s
+ToolsSection:CreateToggle({ Name = "Toggle Anti Void", Flag = "Anti_Void", CurrentValue = false, Callback = function(s) antiVoidEnabled = s end })
+ToolsSection:CreateToggle({ Name = "Toggle Low GFX", Flag = "Low_GFX", CurrentValue = false, Callback = function(s)
+    lowGfxEnabled = s
     if s then
-        for _,v in ipairs(Workspace:GetDescendants()) do
-            if v:IsA("BasePart") and not v:IsA("Terrain") then if not originalGfx[v] then originalGfx[v]={Material=v.Material} end v.Material=Enum.Material.SmoothPlastic
-            elseif v:IsA("Decal") or v:IsA("Texture") then if not originalGfx[v] then originalGfx[v]={Transparency=v.Transparency} end v.Transparency=1 end
+        for _, v in ipairs(Workspace:GetDescendants()) do
+            if v:IsA("BasePart") and not v:IsA("Terrain") then
+                if not originalGfx[v] then originalGfx[v] = { Material = v.Material } end
+                v.Material = Enum.Material.SmoothPlastic
+            elseif v:IsA("Decal") or v:IsA("Texture") then
+                if not originalGfx[v] then originalGfx[v] = { Transparency = v.Transparency } end
+                v.Transparency = 1
+            end
         end
     else
-        for inst,data in pairs(originalGfx) do
-            if inst and inst.Parent then if data.Material then inst.Material=data.Material end if data.Transparency then inst.Transparency=data.Transparency end end
+        for inst, data in pairs(originalGfx) do
+            if inst and inst.Parent then
+                if data.Material    then inst.Material    = data.Material    end
+                if data.Transparency then inst.Transparency = data.Transparency end
+            end
         end
         table.clear(originalGfx)
     end
 end })
 
 -- ===================== TELEPORTS TAB =====================
-local TeleportsTab     = Window:CreateTab({ Name="Teleports", Icon=123456789 })
+local TeleportsTab     = Window:CreateTab({ Name = "Teleports", Icon = 123456789 })
 local LocationsSection = TeleportsTab:CreateSection("Locations")
 
-LocationsSection:CreateButton({ Name="Lobby", Callback=function()
-    local r=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if r then r.CFrame=CFrame.new(13.82,504.78,-51.92) end
+LocationsSection:CreateButton({ Name = "Lobby", Callback = function()
+    local r = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if r then r.CFrame = CFrame.new(13.82, 504.78, -51.92) end
 end })
-LocationsSection:CreateButton({ Name="Voting Room", Callback=function()
-    local r=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if r then r.CFrame=CFrame.new(13.89,507.13,35.83) end
+LocationsSection:CreateButton({ Name = "Voting Room", Callback = function()
+    local r = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if r then r.CFrame = CFrame.new(13.89, 507.13, 35.83) end
 end })
-LocationsSection:CreateButton({ Name="Map", Callback=function()
-    local char=LocalPlayer.Character local root=char and char:FindFirstChild("HumanoidRootPart")
+LocationsSection:CreateButton({ Name = "Map", Callback = function()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
-    local spawns={}
-    for _,v in ipairs(Workspace:GetDescendants()) do
-        if v:IsA("BasePart") and (v.Name=="SpawnLocation" or v.Name=="Spawn" or string.lower(v.Name)=="spawn") and not isInLobby(v.Position) then
-            table.insert(spawns,v)
+    local spawns = {}
+    for _, v in ipairs(Workspace:GetDescendants()) do
+        if v:IsA("BasePart") and (v.Name == "SpawnLocation" or v.Name == "Spawn" or string.lower(v.Name) == "spawn") and not isInLobby(v.Position) then
+            table.insert(spawns, v)
         end
     end
-    if #spawns>0 then root.CFrame=spawns[math.random(1,#spawns)].CFrame+Vector3.new(0,3,0) end
+    if #spawns > 0 then root.CFrame = spawns[math.random(1, #spawns)].CFrame + Vector3.new(0, 3, 0) end
 end })
-LocationsSection:CreateButton({ Name="Sheriff", Callback=function()
-    local root=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+LocationsSection:CreateButton({ Name = "Sheriff", Callback = function()
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p~=LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
             if p.Backpack:FindFirstChild("Gun") or p.Character:FindFirstChild("Gun") then
-                root.CFrame=p.Character.HumanoidRootPart.CFrame+Vector3.new(0,3,0) break
+                root.CFrame = p.Character.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0) break
             end
         end
     end
 end })
-LocationsSection:CreateButton({ Name="Murderer", Callback=function()
-    local root=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+LocationsSection:CreateButton({ Name = "Murderer", Callback = function()
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return end
-    for _,p in ipairs(Players:GetPlayers()) do
-        if p~=LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
             if p.Backpack:FindFirstChild("Knife") or p.Character:FindFirstChild("Knife") then
-                root.CFrame=p.Character.HumanoidRootPart.CFrame+Vector3.new(0,3,0) break
+                root.CFrame = p.Character.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0) break
             end
         end
     end
 end })
 
-local tpPlayerName=""
-LocationsSection:CreateTextbox({ Name="Teleport to Player", PlaceholderText="Enter player name...", CurrentValue="", Flag="Teleport_to_Player", Callback=function(t) tpPlayerName=t end })
-LocationsSection:CreateButton({ Name="Teleport", Callback=function()
-    if tpPlayerName=="" then return end
-    for _,p in ipairs(Players:GetPlayers()) do
-        if string.find(string.lower(p.Name),string.lower(tpPlayerName)) and p~=LocalPlayer then
-            local root=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            local pRoot=p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-            if root and pRoot then root.CFrame=pRoot.CFrame+Vector3.new(0,3,0) end
+local tpPlayerName = ""
+LocationsSection:CreateTextbox({ Name = "Teleport to Player", PlaceholderText = "Enter player name...", CurrentValue = "", Flag = "Teleport_to_Player", Callback = function(t) tpPlayerName = t end })
+LocationsSection:CreateButton({ Name = "Teleport", Callback = function()
+    if tpPlayerName == "" then return end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if string.find(string.lower(p.Name), string.lower(tpPlayerName)) and p ~= LocalPlayer then
+            local root  = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            local pRoot = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+            if root and pRoot then root.CFrame = pRoot.CFrame + Vector3.new(0, 3, 0) end
             break
         end
     end
 end })
 
-local ChooseMapSection=TeleportsTab:CreateSection("Choose Map")
-ChooseMapSection:CreateDropdown({ Name="Select Map", Mode="single", Options={"Map 1","Map 2","Map 3"}, CurrentOption="Map 1", Flag="Choose_Map_Dropdown", Callback=function(s) selectedMapToVote=s end })
-ChooseMapSection:CreateButton({ Name="Vote (uses reset)", Callback=function()
-    local det = selectedMapToVote=="Map 2" and "Detector2" or selectedMapToVote=="Map 3" and "Detector1" or "Detector3"
+local ChooseMapSection = TeleportsTab:CreateSection("Choose Map")
+ChooseMapSection:CreateDropdown({ Name = "Select Map", Mode = "single", Options = { "Map 1", "Map 2", "Map 3" }, CurrentOption = "Map 1", Flag = "Choose_Map_Dropdown", Callback = function(s) selectedMapToVote = s end })
+ChooseMapSection:CreateButton({ Name = "Vote (uses reset)", Callback = function()
+    local det = selectedMapToVote == "Map 2" and "Detector2" or selectedMapToVote == "Map 3" and "Detector1" or "Detector3"
     task.spawn(function()
-        CuteWare:Notify({Title="Voting",Content="Voting for "..selectedMapToVote,Duration=2})
-        for i=1,3 do
-            if _G.CuteWareScriptID~=currentScriptID then break end
-            local dp=nil
-            for _,v in ipairs(Workspace:GetDescendants()) do if v:IsA("BasePart") and v.Name==det then dp=v break end end
+        CuteWare:Notify({ Title = "Voting", Content = "Voting for " .. selectedMapToVote, Duration = 2 })
+        for i = 1, 3 do
+            if _G.CuteWareScriptID ~= currentScriptID then break end
+            local dp = nil
+            for _, v in ipairs(Workspace:GetDescendants()) do if v:IsA("BasePart") and v.Name == det then dp = v break end end
             if dp and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                LocalPlayer.Character.HumanoidRootPart.CFrame=dp.CFrame+Vector3.new(0,3,0)
+                LocalPlayer.Character.HumanoidRootPart.CFrame = dp.CFrame + Vector3.new(0, 3, 0)
                 task.wait(0.3)
-                if i<3 then LocalPlayer.Character:BreakJoints() LocalPlayer.CharacterAdded:Wait() task.wait(1) end
-            else CuteWare:Notify({Title="Error",Content=det.." not found!",Duration=3}) break end
+                if i < 3 then LocalPlayer.Character:BreakJoints() LocalPlayer.CharacterAdded:Wait() task.wait(1) end
+            else CuteWare:Notify({ Title = "Error", Content = det .. " not found!", Duration = 3 }) break end
         end
-        CuteWare:Notify({Title="Success",Content="Finished voting!",Duration=3})
+        CuteWare:Notify({ Title = "Success", Content = "Finished voting!", Duration = 3 })
     end)
 end })
 
-local ServerSettingsSection=TeleportsTab:CreateSection("Server Settings")
-ServerSettingsSection:CreateButton({ Name="Rejoin",        Callback=function() end })
-ServerSettingsSection:CreateButton({ Name="Switch Server", Callback=function() end })
-ServerSettingsSection:CreateButton({ Name="Join Low Server", Callback=function() end })
+local ServerSettingsSection = TeleportsTab:CreateSection("Server Settings")
+ServerSettingsSection:CreateButton({ Name = "Rejoin",         Callback = function() end })
+ServerSettingsSection:CreateButton({ Name = "Switch Server",  Callback = function() end })
+ServerSettingsSection:CreateButton({ Name = "Join Low Server", Callback = function() end })
 
 -- ===================== EMOTES TAB =====================
-local EmotesTab = Window:CreateTab({ Name="Emotes", Icon=123456789 })
+local EmotesTab = Window:CreateTab({ Name = "Emotes", Icon = 123456789 })
 
 local MM2EmotesSection = EmotesTab:CreateSection("Murder Mystery Emotes")
-
 for _, e in ipairs(MM2_EMOTES) do
-    MM2EmotesSection:CreateButton({
-        Name = e.name,
-        Callback = function()
-            playMM2Emote(e.name, e.id, e.loop)
-        end
-    })
+    MM2EmotesSection:CreateButton({ Name = e.name, Callback = function() playMM2Emote(e.name, e.id, e.loop) end })
 end
-
-MM2EmotesSection:CreateButton({
-    Name = "Stop Emote",
-    Callback = function() stopAllEmotes() end
-})
+MM2EmotesSection:CreateButton({ Name = "Stop Emote", Callback = function() stopAllEmotes() end })
 
 local DefaultEmotesSection = EmotesTab:CreateSection("Default Emotes")
-DefaultEmotesSection:CreateButton({ Name="Wave",    Callback=function() playEmote("Wave")    end })
-DefaultEmotesSection:CreateButton({ Name="Cheer",   Callback=function() playEmote("Cheer")   end })
-DefaultEmotesSection:CreateButton({ Name="Laugh",   Callback=function() playEmote("Laugh")   end })
-DefaultEmotesSection:CreateButton({ Name="Point",   Callback=function() playEmote("Point")   end })
-DefaultEmotesSection:CreateButton({ Name="Dance",   Callback=function() playEmote("Dance 1") end })
-DefaultEmotesSection:CreateButton({ Name="Dance 2", Callback=function() playEmote("Dance 2") end })
-DefaultEmotesSection:CreateButton({ Name="Dance 3", Callback=function() playEmote("Dance 3") end })
+DefaultEmotesSection:CreateButton({ Name = "Wave",    Callback = function() playEmote("Wave")    end })
+DefaultEmotesSection:CreateButton({ Name = "Cheer",   Callback = function() playEmote("Cheer")   end })
+DefaultEmotesSection:CreateButton({ Name = "Laugh",   Callback = function() playEmote("Laugh")   end })
+DefaultEmotesSection:CreateButton({ Name = "Point",   Callback = function() playEmote("Point")   end })
+DefaultEmotesSection:CreateButton({ Name = "Dance",   Callback = function() playEmote("Dance 1") end })
+DefaultEmotesSection:CreateButton({ Name = "Dance 2", Callback = function() playEmote("Dance 2") end })
+DefaultEmotesSection:CreateButton({ Name = "Dance 3", Callback = function() playEmote("Dance 3") end })
 
-local CustomEmotesSection = EmotesTab:CreateSection("Custom Emote ID")
-local customEmoteIdString = ""
+local CustomEmotesSection  = EmotesTab:CreateSection("Custom Emote ID")
+local customEmoteIdString  = ""
 CustomEmotesSection:CreateTextbox({
-    Name="Custom Emotes",
-    PlaceholderText="Emote ID...",
-    CurrentValue="",
-    Flag="Custom_Emote",
-    Callback=function(text, enterPressed)
+    Name = "Custom Emotes", PlaceholderText = "Emote ID...", CurrentValue = "", Flag = "Custom_Emote",
+    Callback = function(text, enterPressed)
         customEmoteIdString = text
-        if enterPressed and tonumber(text) then
-            playCustomEmoteByID(tonumber(text))
-        end
+        if enterPressed and tonumber(text) then playCustomEmoteByID(tonumber(text)) end
     end
 })
-CustomEmotesSection:CreateButton({ Name="Run Emote", Callback=function()
+CustomEmotesSection:CreateButton({ Name = "Run Emote", Callback = function()
     local id = tonumber(customEmoteIdString)
-    if id then
-        playCustomEmoteByID(id)
-    else
-        CuteWare:Notify({Title="Error", Content="Incorrect animation ID", Duration=3})
-    end
+    if id then playCustomEmoteByID(id)
+    else CuteWare:Notify({ Title = "Error", Content = "Incorrect animation ID", Duration = 3 }) end
 end })
 
 -- ===================== UNIFIED HEARTBEAT =====================
@@ -1081,27 +1117,31 @@ regConn(RunService.Heartbeat:Connect(function()
     local humanoid  = character and character:FindFirstChildOfClass("Humanoid")
 
     if humanoid then
-        if walkspeedEnabled  then humanoid.WalkSpeed = walkspeedValue end
-        if jumppowerEnabled  then humanoid.UseJumpPower=true humanoid.JumpPower=jumppowerValue end
+        if walkspeedEnabled then humanoid.WalkSpeed = walkspeedValue end
+        if jumppowerEnabled then humanoid.UseJumpPower = true humanoid.JumpPower = jumppowerValue end
     end
 
     if antiVoidEnabled and character then
-        local root=character:FindFirstChild("HumanoidRootPart")
+        local root = character:FindFirstChild("HumanoidRootPart")
         if root then
-            local limit=(Workspace.FallenPartsDestroyHeight and Workspace.FallenPartsDestroyHeight~=0/0) and (Workspace.FallenPartsDestroyHeight+35) or -80
-            if root.Position.Y<limit then root.Velocity=Vector3.new(0,0,0) root.CFrame=CFrame.new(root.Position.X,70,root.Position.Z) end
+            local limit = (Workspace.FallenPartsDestroyHeight and Workspace.FallenPartsDestroyHeight ~= 0/0)
+                and (Workspace.FallenPartsDestroyHeight + 35) or -80
+            if root.Position.Y < limit then
+                root.Velocity = Vector3.new(0, 0, 0)
+                root.CFrame   = CFrame.new(root.Position.X, 70, root.Position.Z)
+            end
         end
     end
 
     if antiFlingEnabled and not isFlinging then
-        for _,player in ipairs(Players:GetPlayers()) do
-            if player~=LocalPlayer and player.Character then
-                local hrp=player.Character:FindFirstChild("HumanoidRootPart")
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local hrp = player.Character:FindFirstChild("HumanoidRootPart")
                 if hrp and not hrp.Anchored then
-                    hrp.CustomPhysicalProperties=PhysicalProperties.new(0,0,0,0,0)
-                    hrp.Velocity=Vector3.new(0,0,0)
-                    hrp.RotVelocity=Vector3.new(0,0,0)
-                    hrp.CanCollide=false
+                    hrp.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0, 0, 0)
+                    hrp.Velocity    = Vector3.new(0, 0, 0)
+                    hrp.RotVelocity = Vector3.new(0, 0, 0)
+                    hrp.CanCollide  = false
                 end
             end
         end
@@ -1110,196 +1150,254 @@ end))
 
 regConn(RunService.Stepped:Connect(function()
     if noclipEnabled and LocalPlayer.Character then
-        for _,part in ipairs(LocalPlayer.Character:GetDescendants()) do
-            if part:IsA("BasePart") then part.CanCollide=false end
+        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
         end
     end
 end))
 
-regConn(UserInputService.InputBegan:Connect(function(input,gpe)
+regConn(UserInputService.InputBegan:Connect(function(input, gpe)
     if UserInputService:GetFocusedTextBox() then return end
-    if input.KeyCode==aimbotKey then
-        if aimbotMode=="Toggle" then
-            isAimingPressed=not isAimingPressed
-            if not isAimingPressed then LocalPlayer.CameraMode=Enum.CameraMode.Classic end
+    if input.KeyCode == aimbotKey then
+        if aimbotMode == "Toggle" then
+            isAimingPressed = not isAimingPressed
+            if not isAimingPressed then LocalPlayer.CameraMode = Enum.CameraMode.Classic end
         else
-            isAimingPressed=true
+            isAimingPressed = true
         end
     end
-    if clickTpEnabled and input.UserInputType==Enum.UserInputType.MouseButton1 and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-        local root=LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if root and Mouse.Hit then root.CFrame=CFrame.new(Mouse.Hit.Position+Vector3.new(0,3,0)) end
+    if clickTpEnabled and input.UserInputType == Enum.UserInputType.MouseButton1 and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+        local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if root and Mouse.Hit then root.CFrame = CFrame.new(Mouse.Hit.Position + Vector3.new(0, 3, 0)) end
     end
 end))
 
 regConn(UserInputService.InputEnded:Connect(function(input)
-    if input.KeyCode==aimbotKey and aimbotMode=="Hold" then
-        isAimingPressed=false LocalPlayer.CameraMode=Enum.CameraMode.Classic
+    if input.KeyCode == aimbotKey and aimbotMode == "Hold" then
+        isAimingPressed = false
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
     end
 end))
 
 regConn(UserInputService.JumpRequest:Connect(function()
     if infJumpEnabled and LocalPlayer.Character then
-        local hum=LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
         if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
     end
 end))
 
--- ===================== AIMBOT ENGINE =====================
+-- ===================== FIX 3: AIMBOT ENGINE (с кешем цели) =====================
 local wasAimingActive = false
-RunService:BindToRenderStep("CuteWareAimbotEngine", Enum.RenderPriority.Camera.Value+1, function()
+RunService:BindToRenderStep("CuteWareAimbotEngine", Enum.RenderPriority.Camera.Value + 1, function()
     if aimbotEnabled and isAimingPressed then
-        wasAimingActive=true
-        local target=nil
-        for _,p in ipairs(Players:GetPlayers()) do
-            if p~=LocalPlayer then
-                local hasKnife=false
-                local containers={p.Backpack, p.Character}
-                for _,cont in ipairs(containers) do
-                    if cont then
-                        for _,tool in ipairs(cont:GetChildren()) do
-                            if tool:IsA("Tool") and (tool.Name:lower()=="knife" or tool:FindFirstChild("KnifeScript") or tool:FindFirstChild("Stab") or tool:FindFirstChild("Slash")) then
-                                hasKnife=true break
-                            end
-                        end
-                    end
-                    if hasKnife then break end
-                end
-                if hasKnife and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-                    local hum=p.Character:FindFirstChildOfClass("Humanoid")
-                    if hum and hum.Health>0 then target=p.Character.HumanoidRootPart break end
-                end
-            end
-        end
-        if target then
-            local camera=Workspace.CurrentCamera
-            if cameraModeSetting=="First Person" then
-                LocalPlayer.CameraMode=Enum.CameraMode.LockFirstPerson
+        wasAimingActive = true
+        updateAimbotTarget()
+        local target = cachedAimbotTarget
+        if target and target.Parent then
+            local camera = Workspace.CurrentCamera
+            if cameraModeSetting == "First Person" then
+                LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
             else
-                LocalPlayer.CameraMode=Enum.CameraMode.Classic
+                LocalPlayer.CameraMode = Enum.CameraMode.Classic
             end
-            local tCF=CFrame.lookAt(camera.CFrame.Position, target.Position)
-            if aimbotSmoothness==0 then camera.CFrame=tCF
-            else camera.CFrame=camera.CFrame:Lerp(tCF, 1/(aimbotSmoothness+1)) end
+            local tCF = CFrame.lookAt(camera.CFrame.Position, target.Position)
+            if aimbotSmoothness == 0 then camera.CFrame = tCF
+            else camera.CFrame = camera.CFrame:Lerp(tCF, 1 / (aimbotSmoothness + 1)) end
         else
-            LocalPlayer.CameraMode=Enum.CameraMode.Classic
+            cachedAimbotTarget = nil
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
         end
     else
-        if wasAimingActive then wasAimingActive=false LocalPlayer.CameraMode=Enum.CameraMode.Classic end
+        if wasAimingActive then
+            wasAimingActive = false
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        end
     end
 end)
 
 -- ===================== ESP + CHAMS LOOP =====================
 task.spawn(function()
     while true do
-        if _G.CuteWareScriptID~=currentScriptID then break end
-        for _,player in ipairs(Players:GetPlayers()) do
-            if player~=LocalPlayer then
-                pcall(function()
-                    local character=player.Character
-                    if not character then return end
-                    local head=character:FindFirstChild("Head")
-                    if not head then return end
-                    local hum=character:FindFirstChildOfClass("Humanoid")
-                    if not (hum and hum.Health>0) then
+        if _G.CuteWareScriptID ~= currentScriptID then break end
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local character = player.Character
+                local head = character:FindFirstChild("Head")
+                if head then
+                    local hum = character:FindFirstChildOfClass("Humanoid")
+                    if not (hum and hum.Health > 0) then
                         clearChams(character)
-                        local esp=head:FindFirstChild("CuteWareESP") if esp then esp:Destroy() end
-                        return
-                    end
-                    local role=playerRoles[player] or "Innocent"
-                    local color, espOn, chamsOn
-                    if role=="Murderer" then       color=Color3.fromRGB(255,0,0)   espOn=murdEsp    chamsOn=murdChams
-                    elseif role=="Sheriff" then    color=Color3.fromRGB(0,0,255)   espOn=sheriffEsp chamsOn=sheriffChams
-                    else                           color=Color3.fromRGB(0,255,0)   espOn=innoEsp    chamsOn=innoChams end
-                    local existingEsp=head:FindFirstChild("CuteWareESP")
-                    if espOn then
-                        if not existingEsp then
-                            local bg=Instance.new("BillboardGui") bg.Name="CuteWareESP" bg.AlwaysOnTop=true bg.Size=UDim2.new(0,200,0,50) bg.StudsOffset=Vector3.new(0,3,0) bg.Adornee=head
-                            local tl=Instance.new("TextLabel") tl.Name="NameLabel" tl.BackgroundTransparency=1 tl.Size=UDim2.new(1,0,1,0) tl.Text=player.Name tl.Font=Enum.Font.GothamBold tl.TextSize=16 tl.TextColor3=color tl.TextStrokeTransparency=0.5 tl.TextStrokeColor3=Color3.fromRGB(0,0,0) tl.Parent=bg bg.Parent=head
-                        else
-                            existingEsp.NameLabel.TextColor3=color existingEsp.NameLabel.Text=player.Name
-                        end
+                        local esp = head:FindFirstChild("CuteWareESP")
+                        if esp then esp:Destroy() end
                     else
-                        if existingEsp then existingEsp:Destroy() end
+                        local role = playerRoles[player] or "Innocent"
+                        local color, espOn, chamsOn
+                        if role == "Murderer" then
+                            color = Color3.fromRGB(255, 0, 0)   espOn = murdEsp    chamsOn = murdChams
+                        elseif role == "Sheriff" then
+                            color = Color3.fromRGB(0, 0, 255)   espOn = sheriffEsp chamsOn = sheriffChams
+                        else
+                            color = Color3.fromRGB(0, 255, 0)   espOn = innoEsp    chamsOn = innoChams
+                        end
+                        local existingEsp = head:FindFirstChild("CuteWareESP")
+                        if espOn then
+                            if not existingEsp then
+                                local bg = Instance.new("BillboardGui")
+                                bg.Name          = "CuteWareESP"
+                                bg.AlwaysOnTop   = true
+                                bg.Size          = UDim2.new(0, 200, 0, 50)
+                                bg.StudsOffset   = Vector3.new(0, 3, 0)
+                                bg.Adornee       = head
+                                local tl = Instance.new("TextLabel")
+                                tl.Name                 = "NameLabel"
+                                tl.BackgroundTransparency = 1
+                                tl.Size                 = UDim2.new(1, 0, 1, 0)
+                                tl.Text                 = player.Name
+                                tl.Font                 = Enum.Font.GothamBold
+                                tl.TextSize             = 16
+                                tl.TextColor3           = color
+                                tl.TextStrokeTransparency = 0.5
+                                tl.TextStrokeColor3     = Color3.fromRGB(0, 0, 0)
+                                tl.Parent               = bg
+                                bg.Parent               = head
+                            else
+                                existingEsp.NameLabel.TextColor3 = color
+                                existingEsp.NameLabel.Text       = player.Name
+                            end
+                        else
+                            if existingEsp then existingEsp:Destroy() end
+                        end
+                        if chamsOn then applyChams(character, color, chamsOpacityValue)
+                        else clearChams(character) end
                     end
-                    if chamsOn then applyChams(character,color,chamsOpacityValue) else clearChams(character) end
-                end)
+                end
             end
         end
         task.wait(0.5)
     end
 end)
 
--- ===================== DROPPED GUN LOOP =====================
+-- ===================== FIX 2: DROPPED GUN LOOP (без GetDescendants) =====================
+-- cachedGunDrop обновляется через события — здесь только используем кеш
+-- и храним ссылки на созданные визуальные объекты вместо поиска через GetDescendants()
+local gunChamsRef   = nil
+local gunEspRef     = nil
+local lastGunRef    = nil  -- на какую деталь они навешаны
+
 task.spawn(function()
     while true do
-        if _G.CuteWareScriptID~=currentScriptID then break end
-        local gun=findGunDrop()
-        for _,desc in ipairs(Workspace:GetDescendants()) do
-            if desc.Name=="CuteWareDroppedGunChams" or desc.Name=="CuteWareDroppedGunESP" then pcall(function() desc:Destroy() end) end
+        if _G.CuteWareScriptID ~= currentScriptID then break end
+
+        local gun = findGunDrop()
+
+        -- если пушка сменилась (или исчезла) — чистим старые визуалы
+        if lastGunRef ~= gun then
+            if gunChamsRef and gunChamsRef.Parent then gunChamsRef:Destroy() end
+            if gunEspRef   and gunEspRef.Parent   then gunEspRef:Destroy()   end
+            gunChamsRef = nil
+            gunEspRef   = nil
+            lastGunRef  = gun
         end
-        if _G.ViewDroppedGunEnabled and gun then
-            if not gun:FindFirstChild("CuteWareDroppedGunChams") then
-                local a=Instance.new("BoxHandleAdornment") a.Name="CuteWareDroppedGunChams" a.Size=gun.Size+Vector3.new(0.1,0.1,0.1) a.AlwaysOnTop=true a.ZIndex=6 a.Color3=Color3.fromRGB(255,255,255) a.Transparency=0.3 a.Adornee=gun a.Parent=gun
-            end
-            if not gun:FindFirstChild("CuteWareDroppedGunESP") then
-                local bg=Instance.new("BillboardGui") bg.Name="CuteWareDroppedGunESP" bg.AlwaysOnTop=true bg.Size=UDim2.new(0,200,0,40) bg.StudsOffset=Vector3.new(0,3,0) bg.Adornee=gun
-                local tl=Instance.new("TextLabel") tl.Name="GunLabel" tl.BackgroundTransparency=1 tl.Size=UDim2.new(1,0,1,0) tl.Text="Dropped Gun" tl.Font=Enum.Font.GothamBold tl.TextSize=16 tl.TextColor3=Color3.fromRGB(255,255,255) tl.TextStrokeTransparency=0.4 tl.TextStrokeColor3=Color3.fromRGB(0,0,0) tl.Parent=bg bg.Parent=gun
-            end
-        end
+
         if gun then
-            updateLabelText(GunStatusLabel,"✅ Gun Status : Dropped")
+            updateLabelText(GunStatusLabel, "✅ Gun Status : Dropped")
+
+            if _G.ViewDroppedGunEnabled then
+                if not (gunChamsRef and gunChamsRef.Parent) then
+                    local a = Instance.new("BoxHandleAdornment")
+                    a.Name        = "CuteWareDroppedGunChams"
+                    a.Size        = gun.Size + Vector3.new(0.1, 0.1, 0.1)
+                    a.AlwaysOnTop = true
+                    a.ZIndex      = 6
+                    a.Color3      = Color3.fromRGB(255, 255, 255)
+                    a.Transparency = 0.3
+                    a.Adornee     = gun
+                    a.Parent      = gun
+                    gunChamsRef   = a
+                end
+                if not (gunEspRef and gunEspRef.Parent) then
+                    local bg = Instance.new("BillboardGui")
+                    bg.Name        = "CuteWareDroppedGunESP"
+                    bg.AlwaysOnTop = true
+                    bg.Size        = UDim2.new(0, 200, 0, 40)
+                    bg.StudsOffset = Vector3.new(0, 3, 0)
+                    bg.Adornee     = gun
+                    local tl = Instance.new("TextLabel")
+                    tl.Name                   = "GunLabel"
+                    tl.BackgroundTransparency = 1
+                    tl.Size                   = UDim2.new(1, 0, 1, 0)
+                    tl.Text                   = "Dropped Gun"
+                    tl.Font                   = Enum.Font.GothamBold
+                    tl.TextSize               = 16
+                    tl.TextColor3             = Color3.fromRGB(255, 255, 255)
+                    tl.TextStrokeTransparency = 0.4
+                    tl.TextStrokeColor3       = Color3.fromRGB(0, 0, 0)
+                    tl.Parent                 = bg
+                    bg.Parent                 = gun
+                    gunEspRef                 = bg
+                end
+            else
+                if gunChamsRef and gunChamsRef.Parent then gunChamsRef:Destroy() gunChamsRef = nil end
+                if gunEspRef   and gunEspRef.Parent   then gunEspRef:Destroy()   gunEspRef   = nil end
+            end
+
             if _G.AutoGrabGunEnabled then
-                local safe=true
-                for _,p in ipairs(Players:GetPlayers()) do
-                    if playerRoles[p]=="Murderer" and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-                        if (p.Character.HumanoidRootPart.Position-gun.Position).Magnitude<5 then safe=false break end
+                local safe = true
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if playerRoles[p] == "Murderer" and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                        if (p.Character.HumanoidRootPart.Position - gun.Position).Magnitude < 5 then
+                            safe = false break
+                        end
                     end
                 end
                 if safe and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                    LocalPlayer.Character.HumanoidRootPart.CFrame=gun.CFrame+Vector3.new(0,2,0)
+                    LocalPlayer.Character.HumanoidRootPart.CFrame = gun.CFrame + Vector3.new(0, 2, 0)
                 end
             end
         else
-            updateLabelText(GunStatusLabel,"❌ Gun Status : Not Dropped")
+            updateLabelText(GunStatusLabel, "❌ Gun Status : Not Dropped")
         end
+
         task.wait(0.5)
     end
 end)
 
 -- ===================== COINS CHAMS LOOP =====================
+-- FIX 4: убраны лишние pcall из горячего цикла
 task.spawn(function()
     while true do
-        if _G.CuteWareScriptID~=currentScriptID then break end
+        if _G.CuteWareScriptID ~= currentScriptID then break end
         if coinsChams then
-            pcall(function()
-                local folder=Workspace:FindFirstChild("Normal") or Workspace
-                for _,child in ipairs(folder:GetDescendants()) do
-                    if (child.Name=="CoinVisual" or child.Name=="GoldCoin" or string.find(string.lower(child.Name),"coin")) and child:IsA("BasePart") then
-                        if child.Transparency>=0.9 then
-                            local c=child:FindFirstChild("CuteWareCoinChams") if c then c:Destroy() end
-                        elseif not child:FindFirstChild("CuteWareCoinChams") then
-                            local a=Instance.new("BoxHandleAdornment") a.Name="CuteWareCoinChams" a.Size=child.Size+Vector3.new(0.05,0.05,0.05) a.AlwaysOnTop=true a.ZIndex=6 a.Color3=Color3.fromRGB(255,215,0) a.Transparency=chamsOpacityValue a.Adornee=child a.Parent=child
-                        end
+            local folder = Workspace:FindFirstChild("Normal") or Workspace
+            for _, child in ipairs(folder:GetDescendants()) do
+                if child:IsA("BasePart") and (child.Name == "CoinVisual" or child.Name == "GoldCoin" or string.find(string.lower(child.Name), "coin")) then
+                    if child.Transparency >= 0.9 then
+                        local c = child:FindFirstChild("CuteWareCoinChams")
+                        if c then c:Destroy() end
+                    elseif not child:FindFirstChild("CuteWareCoinChams") then
+                        local a = Instance.new("BoxHandleAdornment")
+                        a.Name        = "CuteWareCoinChams"
+                        a.Size        = child.Size + Vector3.new(0.05, 0.05, 0.05)
+                        a.AlwaysOnTop = true
+                        a.ZIndex      = 6
+                        a.Color3      = Color3.fromRGB(255, 215, 0)
+                        a.Transparency = chamsOpacityValue
+                        a.Adornee     = child
+                        a.Parent      = child
                     end
                 end
-            end)
+            end
         end
         task.wait(1)
     end
 end)
 
-local CreditsTab = Window:CreateTab({
-    Name = "Credits",
-    Icon = 123456789,
-})
+-- ===================== CREDITS TAB =====================
+local CreditsTab = Window:CreateTab({ Name = "Credits", Icon = 123456789 })
 
--- Discord
 local OwnerSection = CreditsTab:CreateSection("Owner")
-
 OwnerSection:CreateLabel("👻 Everything Was Made by First_Dreamer on Discord")
 
--- Дополнительные разделы
 local ThanksSection = CreditsTab:CreateSection("Thanks & Contributors")
 ThanksSection:CreateLabel("❤️ Special thanks to:")
 ThanksSection:CreateLabel("• q44w_s - Helped a lot With UI")
@@ -1307,22 +1405,14 @@ ThanksSection:CreateLabel("• All Testers And Friends Who Helped")
 ThanksSection:CreateLabel("• You - For Using the Script")
 
 local SocialSection = CreditsTab:CreateSection("Other Links")
-SocialSection:CreateButton({
-    Name = "Copy YouTube Link",
-    Callback = function()
-        setclipboard("https://www.youtube.com/@cuteware.scripts?sub_confirmation=1")
-    end,
-})
-
-SocialSection:CreateButton({
-    Name = "Copy Discord Invite",
-    Callback = function()
-        setclipboard("https://dsc.gg/cuteware")
-        Window:CreateNotification("Success", "Invite copied!", 3)
-    end,
-})
+SocialSection:CreateButton({ Name = "Copy YouTube Link", Callback = function()
+    setclipboard("https://www.youtube.com/@cuteware.scripts?sub_confirmation=1")
+end })
+SocialSection:CreateButton({ Name = "Copy Discord Invite", Callback = function()
+    setclipboard("https://dsc.gg/cuteware")
+    CuteWare:Notify({ Title = "Success", Content = "Invite copied!", Duration = 3 })
+end })
 
 local ScriptInfoSection = CreditsTab:CreateSection("Script info")
-
 ScriptInfoSection:CreateLabel("📌 Released On 16.06.26")
 ScriptInfoSection:CreateLabel("🟢 Current Status : Updated")
