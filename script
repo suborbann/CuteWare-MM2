@@ -1,0 +1,2318 @@
+if _G.CuteWareLoaded then
+    _G.CuteWareScriptID = nil
+    if _G.CuteWareConnections then
+        for _, conn in ipairs(_G.CuteWareConnections) do
+            if conn then pcall(function() conn:Disconnect() end) end
+        end
+    end
+    pcall(function() game:GetService("RunService"):UnbindFromRenderStep("CuteWareAimbotEngine") end)
+    
+    for _, player in ipairs(game:GetService("Players"):GetPlayers()) do
+        if player.Character then
+            for _, desc in ipairs(player.Character:GetDescendants()) do
+                if desc.Name == "CuteWareChamAdornment" or desc.Name == "CuteWareESP" then
+                    pcall(function() desc:Destroy() end)
+                end
+            end
+        end
+    end
+    for _, desc in ipairs(game:GetService("Workspace"):GetDescendants()) do
+        if desc.Name == "CuteWareCoinChams" or desc.Name == "CuteWareGunESP" or desc.Name == "CuteWareDroppedGunESP" then
+            pcall(function() desc:Destroy() end)
+        end
+    end
+end
+
+_G.CuteWareLoaded = true
+_G.CuteWareScriptID = math.random(1, 100000)
+local currentScriptID = _G.CuteWareScriptID
+_G.CuteWareConnections = {}
+_G.ViewDroppedGunEnabled = false
+_G.AutoGrabGunEnabled = false
+
+local function regConn(conn)
+    table.insert(_G.CuteWareConnections, conn)
+    return conn
+end
+
+local VirtualUser = game:GetService("VirtualUser")
+regConn(game:GetService("Players").LocalPlayer.Idled:Connect(function()
+    VirtualUser:CaptureController()
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new())
+end))
+
+local Workspace = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local originalTransparencies = {}
+local descendantConnection = nil
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Mouse = LocalPlayer:GetMouse()
+
+local flyEnabled = false
+local flySpeed = 1
+local bodyVelocity, bodyGyro, flyConnection
+local clickTpEnabled = false
+local noclipEnabled = false
+local infJumpEnabled = false
+local walkspeedEnabled = false
+local walkspeedValue = 16
+local jumppowerEnabled = false
+local jumppowerValue = 50
+local selectedPlayers = {}
+local antiFlingEnabled = false
+local isFlinging = false
+
+local innoEsp, sheriffEsp, murdEsp = false, false, false
+local innoChams, sheriffChams, murdChams = false, false, false
+local coinsChams = false
+local antiVoidEnabled = false
+local lowGfxEnabled = false
+local originalGfx = {}
+local chamsOpacityValue = 0.7
+
+local aimbotEnabled = false
+local aimbotMode = "Hold"
+local aimbotKey = Enum.KeyCode.F
+local aimbotSmoothness = 0
+local lockingMode = "Camera"
+local cameraModeSetting = "First Person"
+local isAimingPressed = false
+local shootSideSetting = "From Back"
+
+local shootingMurderer = false
+local killingSheriff = false
+local killingEveryone = false
+local killingPlayer = false
+local killPlayerTargetName = ""
+local killEveryoneWhitelist = {}
+
+local currentEmoteTrack = nil
+local playerRoles = {}
+local lobbyPosition = Vector3.new(13.82, 504.78, -51.92)
+local lobbyRadius = 150
+local selectedMapToVote = "Map 1"
+
+-- Autofarm vars
+local coinFarmActive = false
+local coinFarmSpeed = 2
+local coinFarmWhenDone = "Reset"
+local xpFarmActive = false
+local xpEarned = 0
+local xpFarmAntiFlingEnabled = false
+local xpStartValue = 0
+
+local CuteWare = loadstring(game:HttpGet("https://raw.githubusercontent.com/suborbann/CuteWare-UI-Library/refs/heads/main/source"))()
+CuteWare:Init()
+
+CuteWare:CreateKeySystem({
+    Enabled = false,
+    Key = "cutekey123",
+    Title = "CuteWare Access",
+    Note = "Enter your key to continue (cutekey123).",
+    OnClose = function()
+        CuteWare:Notify({
+            Title = "Denied",
+            Content = "Invalid key or cancelled.",
+            Duration = 3,
+            Position = "TopRight"
+        })
+    end,
+})
+
+CuteWare:NotifyBig({
+    Title = "UI Loaded",
+    Content = "CuteWare loaded successfully!",
+    Duration = 5,
+    Icon = 125089054351368,
+    IconSide = 2,
+    Buttons = {
+        { Text = "OK", Callback = function() end },
+    },
+})
+
+local Window = CuteWare:CreateWindow({
+    Name = "cuteware",
+    Subtitle = "Murder Mystery 2",
+    Size = UDim2.new(0, 600, 0, 450),
+    Icon = 125089054351368,
+    BackgroundImage = "rbxassetid://139904778246005",
+    BackgroundImageTransparency = 0.75,
+    ToggleKeybind = Enum.KeyCode.RightControl,
+})
+
+task.spawn(function()
+    task.wait(0.5)
+    pcall(function()
+        for _, gui in ipairs(game:GetService("CoreGui"):GetChildren()) do
+            if gui:IsA("ScreenGui") and gui.Name == "cuteware" then
+                gui.DisplayOrder = 999999
+                gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+            end
+        end
+        if LocalPlayer:FindFirstChildOfClass("PlayerGui") then
+            for _, gui in ipairs(LocalPlayer:FindFirstChildOfClass("PlayerGui"):GetChildren()) do
+                if gui:IsA("ScreenGui") and gui.Name == "cuteware" then
+                    gui.DisplayOrder = 999999
+                    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+                end
+            end
+        end
+    end)
+end)
+
+local function toggleElementVisible(element, bool)
+    if not element then return end
+    if type(element) == "table" then
+        for _, k in ipairs({"Instance", "Frame", "Object", "Main", "Container", "Root"}) do
+            if element[k] and typeof(element[k]) == "Instance" and element[k]:IsA("GuiObject") then
+                element[k].Visible = bool
+                return
+            end
+        end
+        for _, v in pairs(element) do
+            if typeof(v) == "Instance" and v:IsA("GuiObject") then
+                v.Visible = bool
+                return
+            end
+        end
+    elseif typeof(element) == "Instance" and element:IsA("GuiObject") then
+        element.Visible = bool
+    end
+end
+
+local function updateLabelText(labelObj, newText)
+    if not labelObj then return end
+    if type(labelObj) == "table" then
+        if labelObj.SetText then
+            pcall(function() labelObj:SetText(newText) end)
+        elseif labelObj.Text then
+            labelObj.Text = newText
+        elseif labelObj.Instance and labelObj.Instance:IsA("TextLabel") then
+            labelObj.Instance.Text = newText
+        elseif labelObj.Label and labelObj.Label:IsA("TextLabel") then
+            labelObj.Label.Text = newText
+        end
+    elseif typeof(labelObj) == "Instance" and labelObj:IsA("TextLabel") then
+        labelObj.Text = newText
+    end
+end
+
+local function getPlayerRole(player)
+    local character = player.Character
+    local backpack = player:FindFirstChild("Backpack")
+
+    local function checkContainer(container)
+        if not container then return nil end
+        for _, item in ipairs(container:GetChildren()) do
+            if item:IsA("Tool") then
+                local name = string.lower(item.Name)
+                if name == "knife" or item:FindFirstChild("KnifeScript") or item:FindFirstChild("Stab") or item:FindFirstChild("Slash") then
+                    return "Murderer"
+                elseif name == "gun" or item:FindFirstChild("GunScript") or item:FindFirstChild("Shoot") or item:FindFirstChild("Activation") then
+                    return "Sheriff"
+                end
+            end
+        end
+        return nil
+    end
+
+    local charRole = checkContainer(character)
+    if charRole then return charRole end
+    local bpRole = checkContainer(backpack)
+    if bpRole then return bpRole end
+    return "Innocent"
+end
+
+task.spawn(function()
+    while true do
+        if _G.CuteWareScriptID ~= currentScriptID then break end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                playerRoles[p] = getPlayerRole(p) or "Innocent"
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+local function getPlayerKnife()
+    local myChar = LocalPlayer.Character
+    local knife = LocalPlayer.Backpack:FindFirstChild("Knife") or (myChar and myChar:FindFirstChild("Knife"))
+    if not knife then
+        for _, item in ipairs(LocalPlayer.Backpack:GetChildren()) do
+            if item:IsA("Tool") and (string.find(string.lower(item.Name), "knife") or item:FindFirstChild("KnifeScript") or item:FindFirstChild("Stab") or item:FindFirstChild("Slash")) then
+                knife = item
+                break
+            end
+        end
+    end
+    if not knife and myChar then
+        for _, item in ipairs(myChar:GetChildren()) do
+            if item:IsA("Tool") and (string.find(string.lower(item.Name), "knife") or item:FindFirstChild("KnifeScript") or item:FindFirstChild("Stab") or item:FindFirstChild("Slash")) then
+                knife = item
+                break
+            end
+        end
+    end
+    return knife
+end
+
+local function getPlayerGun()
+    local myChar = LocalPlayer.Character
+    local gun = LocalPlayer.Backpack:FindFirstChild("Gun") or (myChar and myChar:FindFirstChild("Gun"))
+    if not gun then
+        for _, item in ipairs(LocalPlayer.Backpack:GetChildren()) do
+            if item:IsA("Tool") and (string.find(string.lower(item.Name), "gun") or item:FindFirstChild("GunScript") or item:FindFirstChild("Shoot") or item:FindFirstChild("Activation")) then
+                gun = item
+                break
+            end
+        end
+    end
+    if not gun and myChar then
+        for _, item in ipairs(myChar:GetChildren()) do
+            if item:IsA("Tool") and (string.find(string.lower(item.Name), "gun") or item:FindFirstChild("GunScript") or item:FindFirstChild("Shoot") or item:FindFirstChild("Activation")) then
+                gun = item
+                break
+            end
+        end
+    end
+    return gun
+end
+
+local function isInLobby(position)
+    return (position - lobbyPosition).Magnitude <= lobbyRadius
+end
+
+local function playCustomEmote(animationId)
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    local animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
+    if currentEmoteTrack then
+        currentEmoteTrack:Stop()
+        currentEmoteTrack:Destroy()
+        currentEmoteTrack = nil
+    end
+    local anim = Instance.new("Animation")
+    anim.AnimationId = "rbxassetid://" .. tostring(animationId)
+    local success, track = pcall(function()
+        return animator:LoadAnimation(anim)
+    end)
+    if success and track then
+        currentEmoteTrack = track
+        currentEmoteTrack.Looped = true
+        currentEmoteTrack:Play()
+    else
+        CuteWare:Notify({Title = "Emotes Error", Content = "Failed to load animation ID: " .. tostring(animationId), Duration = 3})
+    end
+end
+
+local function stopCustomEmote()
+    if currentEmoteTrack then
+        currentEmoteTrack:Stop()
+        currentEmoteTrack:Destroy()
+        currentEmoteTrack = nil
+        CuteWare:Notify({Title = "Emotes", Content = "Emote stopped", Duration = 2})
+    end
+end
+
+local function clearChams(character)
+    for _, desc in ipairs(character:GetDescendants()) do
+        if desc.Name == "CuteWareChamAdornment" then
+            desc:Destroy()
+        end
+    end
+end
+
+local function applyChams(character, color, opacity)
+    for _, part in ipairs(character:GetChildren()) do
+        if part:IsA("BasePart") then
+            local adorn = part:FindFirstChild("CuteWareChamAdornment")
+            if not adorn then
+                adorn = Instance.new("BoxHandleAdornment")
+                adorn.Name = "CuteWareChamAdornment"
+                adorn.Size = part.Size + Vector3.new(0.02, 0.02, 0.02)
+                adorn.AlwaysOnTop = true
+                adorn.ZIndex = 6
+                adorn.Adornee = part
+                adorn.Parent = part
+            end
+            adorn.Color3 = color
+            adorn.Transparency = opacity
+        end
+    end
+end
+
+local function doFling(targetsTable)
+    local Character = LocalPlayer.Character
+    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Humanoid and Humanoid.RootPart
+    if not RootPart or isFlinging then return end
+
+    isFlinging = true
+    local OldPos = RootPart.CFrame
+    local FPDH = Workspace.FallenPartsDestroyHeight
+    Workspace.FallenPartsDestroyHeight = 0/0
+
+    local BV = Instance.new("BodyVelocity")
+    BV.Parent = RootPart
+    BV.Velocity = Vector3.new(0, 0, 0)
+    BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+
+    local noclipLoop = RunService.Stepped:Connect(function()
+        if Character then
+            for _, part in ipairs(Character:GetDescendants()) do
+                if part:IsA("BasePart") then part.CanCollide = false end
+            end
+        end
+    end)
+
+    local FPos = function(BasePart, Pos, Ang)
+        if not RootPart or not Character then return end
+        RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
+        Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
+        RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
+        RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+    end
+
+    local SFBasePart = function(BasePart, THumanoid)
+        local TimeToWait = 2
+        local Time = tick()
+        local Angle = 0
+        repeat
+            if RootPart and THumanoid and BasePart and BasePart.Parent then
+                if BasePart.Velocity.Magnitude < 50 then
+                    Angle = Angle + 100
+                    FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                    task.wait()
+                else
+                    FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                    task.wait()
+                    FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
+                    task.wait()
+                end
+            else
+                break
+            end
+        until tick() - Time > TimeToWait or not isFlinging
+    end
+
+    for _, targetName in ipairs(targetsTable) do
+        if not isFlinging then break end
+        local targetPlayer = Players:FindFirstChild(targetName)
+        local TCharacter = targetPlayer and targetPlayer.Character
+        local THumanoid = TCharacter and TCharacter:FindFirstChildOfClass("Humanoid")
+        local TRootPart = THumanoid and THumanoid.RootPart
+        if THumanoid and TRootPart and not THumanoid.Sit then
+            Workspace.CurrentCamera.CameraSubject = TRootPart
+            SFBasePart(TRootPart, THumanoid)
+            task.wait(0.1)
+        end
+    end
+
+    noclipLoop:Disconnect()
+    if BV then BV:Destroy() end
+    if Humanoid then
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+        Workspace.CurrentCamera.CameraSubject = Humanoid
+    end
+
+    if RootPart and Character then
+        local startTime = tick()
+        repeat
+            RootPart.CFrame = OldPos * CFrame.new(0, .5, 0)
+            Character:SetPrimaryPartCFrame(OldPos * CFrame.new(0, .5, 0))
+            if Humanoid then Humanoid:ChangeState("GettingUp") end
+            for _, part in pairs(Character:GetChildren()) do
+                if part:IsA("BasePart") then
+                    part.Velocity, part.RotVelocity = Vector3.new(), Vector3.new()
+                end
+            end
+            task.wait()
+        until (RootPart.Position - OldPos.Position).Magnitude < 25 or (tick() - startTime > 2)
+    end
+    Workspace.FallenPartsDestroyHeight = FPDH
+    isFlinging = false
+end
+
+-- FIX: Kill Everyone - checks who is still alive (not in lobby), retries if someone survived
+local function toggleKillEveryone()
+    if killingEveryone then
+        killingEveryone = false
+        CuteWare:Notify({Title = "Status", Content = "Kill Everyone Stopped", Duration = 2})
+        return
+    end
+
+    local knife = getPlayerKnife()
+    if not knife then
+        CuteWare:Notify({Title = "Error", Content = "You must have a knife!", Duration = 3})
+        return
+    end
+
+    killingEveryone = true
+    CuteWare:Notify({Title = "Status", Content = "Kill Everyone Started!", Duration = 2})
+
+    task.spawn(function()
+        while killingEveryone do
+            if _G.CuteWareScriptID ~= currentScriptID then break end
+
+            knife = getPlayerKnife()
+            if not knife then
+                killingEveryone = false
+                CuteWare:Notify({Title = "Aborted", Content = "Knife lost!", Duration = 3})
+                break
+            end
+
+            -- Collect all alive players NOT in lobby radius
+            local targets = {}
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer then
+                    local char = p.Character
+                    local root = char and char:FindFirstChild("HumanoidRootPart")
+                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                    if root and hum and hum.Health > 0 then
+                        if not isInLobby(root.Position) then
+                            table.insert(targets, p)
+                        end
+                    end
+                end
+            end
+
+            if #targets == 0 then
+                killingEveryone = false
+                CuteWare:Notify({Title = "Finished", Content = "All players killed!", Duration = 3})
+                break
+            end
+
+            for _, p in ipairs(targets) do
+                if not killingEveryone or _G.CuteWareScriptID ~= currentScriptID then break end
+
+                knife = getPlayerKnife()
+                if not knife then
+                    killingEveryone = false
+                    CuteWare:Notify({Title = "Aborted", Content = "Knife disappeared!", Duration = 3})
+                    break
+                end
+
+                local char = p.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+                if root and hum and hum.Health > 0 and not isInLobby(root.Position) then
+                    local myChar = LocalPlayer.Character
+                    local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+                    if myRoot then
+                        myRoot.CFrame = root.CFrame * CFrame.new(0, 0, 0.8)
+                        if knife.Parent == LocalPlayer.Backpack then
+                            knife.Parent = myChar
+                        end
+                        for i = 1, 4 do
+                            knife:Activate()
+                            task.wait(0.02)
+                        end
+                    end
+                    task.wait(0.05)
+                end
+            end
+
+            -- After going through all targets, loop again to check survivors
+            task.wait(0.2)
+        end
+    end)
+end
+
+local function toggleShootMurderer()
+    if shootingMurderer then
+        shootingMurderer = false
+        isAimingPressed = false
+        CuteWare:Notify({Title = "Status", Content = "Shoot Murderer Stopped", Duration = 2})
+        return
+    end
+    shootingMurderer = true
+    isAimingPressed = true
+    CuteWare:Notify({Title = "Status", Content = "Shooting Murderer...", Duration = 2})
+
+    task.spawn(function()
+        local myChar = LocalPlayer.Character
+        local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        local originalCFrame = myRoot and myRoot.CFrame
+
+        while shootingMurderer do
+            if _G.CuteWareScriptID ~= currentScriptID then break end
+            local murderer = nil
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and playerRoles[p] == "Murderer" then
+                    if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                        local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 then
+                            murderer = p.Character
+                            break
+                        end
+                    end
+                end
+            end
+
+            if not murderer then
+                shootingMurderer = false
+                isAimingPressed = false
+                if myRoot and originalCFrame then myRoot.CFrame = originalCFrame end
+                CuteWare:Notify({Title = "Finished", Content = "Murderer dead or not found", Duration = 3})
+                break
+            end
+
+            myChar = LocalPlayer.Character
+            myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local mudRoot = murderer:FindFirstChild("HumanoidRootPart")
+
+            if myRoot and mudRoot then
+                local targetPos = mudRoot.Position - (mudRoot.CFrame.LookVector * 2.5)
+                myRoot.CFrame = CFrame.lookAt(targetPos, mudRoot.Position)
+
+                local gun = getPlayerGun()
+                if gun then
+                    if gun.Parent == LocalPlayer.Backpack then
+                        gun.Parent = myChar
+                    end
+                    task.wait(0.15)
+                    gun:Activate()
+                    task.wait(0.4)
+                    if myRoot and originalCFrame then
+                        myRoot.CFrame = originalCFrame
+                    end
+                    shootingMurderer = false
+                    isAimingPressed = false
+                    CuteWare:Notify({Title = "Success", Content = "Shot fired!", Duration = 3})
+                    break
+                end
+            end
+            task.wait()
+        end
+    end)
+end
+
+local function toggleKillSheriff()
+    if killingSheriff then
+        killingSheriff = false
+        CuteWare:Notify({Title = "Status", Content = "Kill Sheriff Stopped", Duration = 2})
+        return
+    end
+    local knife = getPlayerKnife()
+    if not knife then
+        CuteWare:Notify({Title = "Error", Content = "You must have a knife!", Duration = 3})
+        return
+    end
+    killingSheriff = true
+    CuteWare:Notify({Title = "Status", Content = "Kill Sheriff Started", Duration = 2})
+
+    task.spawn(function()
+        while killingSheriff do
+            if _G.CuteWareScriptID ~= currentScriptID then break end
+            knife = getPlayerKnife()
+            if not knife then
+                killingSheriff = false
+                CuteWare:Notify({Title = "Aborted", Content = "Knife lost!", Duration = 3})
+                break
+            end
+
+            local sheriff = nil
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and playerRoles[p] == "Sheriff" then
+                    if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                        local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 then
+                            sheriff = p.Character
+                            break
+                        end
+                    end
+                end
+            end
+
+            if not sheriff then
+                killingSheriff = false
+                CuteWare:Notify({Title = "Finished", Content = "Sheriff dead or not found", Duration = 3})
+                break
+            end
+
+            local myChar = LocalPlayer.Character
+            local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local shRoot = sheriff:FindFirstChild("HumanoidRootPart")
+
+            if myRoot and shRoot then
+                local targetPos = shRoot.Position - (shRoot.CFrame.LookVector * 1)
+                myRoot.CFrame = CFrame.lookAt(targetPos, shRoot.Position)
+                if knife.Parent == LocalPlayer.Backpack then
+                    knife.Parent = myChar
+                end
+                knife:Activate()
+            end
+            task.wait()
+        end
+    end)
+end
+
+local function toggleKillPlayer()
+    if killingPlayer then
+        killingPlayer = false
+        CuteWare:Notify({Title = "Status", Content = "Kill Player Stopped", Duration = 2})
+        return
+    end
+    if killPlayerTargetName == "" then
+        CuteWare:Notify({Title = "Error", Content = "Enter player name first!", Duration = 3})
+        return
+    end
+    local knife = getPlayerKnife()
+    if not knife then
+        CuteWare:Notify({Title = "Error", Content = "You must have a knife!", Duration = 3})
+        return
+    end
+    killingPlayer = true
+    CuteWare:Notify({Title = "Status", Content = "Targeting: " .. killPlayerTargetName, Duration = 2})
+
+    task.spawn(function()
+        while killingPlayer do
+            if _G.CuteWareScriptID ~= currentScriptID then break end
+            knife = getPlayerKnife()
+            if not knife then
+                killingPlayer = false
+                CuteWare:Notify({Title = "Aborted", Content = "Knife lost!", Duration = 3})
+                break
+            end
+
+            local targetPlayer = nil
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer and (string.find(string.lower(p.Name), string.lower(killPlayerTargetName)) or string.find(string.lower(p.DisplayName), string.lower(killPlayerTargetName))) then
+                    if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                        local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                        if hum and hum.Health > 0 then
+                            targetPlayer = p.Character
+                            break
+                        end
+                    end
+                end
+            end
+
+            if not targetPlayer then
+                killingPlayer = false
+                CuteWare:Notify({Title = "Finished", Content = "Target dead or left", Duration = 3})
+                break
+            end
+
+            local myChar = LocalPlayer.Character
+            local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+            local tRoot = targetPlayer:FindFirstChild("HumanoidRootPart")
+
+            if myRoot and tRoot then
+                local targetPos = tRoot.Position - (tRoot.CFrame.LookVector * 1)
+                myRoot.CFrame = CFrame.lookAt(targetPos, tRoot.Position)
+                if knife.Parent == LocalPlayer.Backpack then
+                    knife.Parent = myChar
+                end
+                knife:Activate()
+            end
+            task.wait()
+        end
+    end)
+end
+
+local function findGunDrop()
+    for _, desc in ipairs(Workspace:GetDescendants()) do
+        if desc:IsA("BasePart") and (desc.Name == "GunDrop" or desc.Name == "Gun_Drop" or (desc.Name == "Gun" and not desc.Parent:IsA("Model") and not desc.Parent:IsA("Backpack"))) then
+            return desc
+        end
+    end
+    return nil
+end
+
+local function grabDroppedGunAction()
+    local gun = findGunDrop()
+    if gun and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        LocalPlayer.Character.HumanoidRootPart.CFrame = gun.CFrame + Vector3.new(0, 2, 0)
+        CuteWare:Notify({Title = "Success", Content = "Teleported to Dropped Gun!", Duration = 2})
+    else
+        CuteWare:Notify({Title = "Error", Content = "Gun is not dropped!", Duration = 2})
+    end
+end
+
+-- XP Label helper - reads from game GUI
+local function getXPLabelData()
+    local success, result = pcall(function()
+        local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not playerGui then return nil end
+        local mainGui = playerGui:FindFirstChild("MainGUI")
+        if not mainGui then return nil end
+        local game_ = mainGui:FindFirstChild("Game")
+        if not game_ then return nil end
+        local inventory = game_:FindFirstChild("Inventory")
+        if not inventory then return nil end
+        local main = inventory:FindFirstChild("Main")
+        if not main then return nil end
+        local weapons = main:FindFirstChild("Weapons")
+        if not weapons then return nil end
+        local evoMenu = weapons:FindFirstChild("EvoMenu")
+        if not evoMenu then return nil end
+        local container = evoMenu:FindFirstChild("Container")
+        if not container then return nil end
+        local xpFrame = container:FindFirstChild("XPFrame")
+        if not xpFrame then return nil end
+        local xpLabel = xpFrame:FindFirstChild("XPLabel")
+        if not xpLabel then return nil end
+        return xpLabel.Text
+    end)
+    if success then return result end
+    return nil
+end
+
+-- Parse XP text like "16,540 / 36,000 XP" -> {current=16540, max=36000}
+local function parseXPText(text)
+    if not text then return nil end
+    local clean = text:gsub(",", ""):gsub(" XP", ""):gsub("XP", "")
+    local current, max = clean:match("(%d+)%s*/%s*(%d+)")
+    if current and max then
+        return {current = tonumber(current), max = tonumber(max)}
+    end
+    return nil
+end
+
+-- ==================== TABS ====================
+
+local MainTab = Window:CreateTab({
+    Name = "Main",
+    Icon = 123456789,
+})
+
+local InnocentSection = MainTab:CreateSection("Innocent")
+
+InnocentSection:CreateButton({
+    Name = "Crash Murderer",
+    Callback = function()
+        local targets = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and playerRoles[p] == "Murderer" then
+                table.insert(targets, p.Name)
+            end
+        end
+        if #targets > 0 then doFling(targets) else CuteWare:Notify({Title = "Error", Content = "Murderer not found!", Duration = 3}) end
+    end,
+})
+
+InnocentSection:CreateButton({
+    Name = "Crash Sheriff",
+    Callback = function()
+        local targets = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer and playerRoles[p] == "Sheriff" then
+                table.insert(targets, p.Name)
+            end
+        end
+        if #targets > 0 then doFling(targets) else CuteWare:Notify({Title = "Error", Content = "Sheriff not found!", Duration = 3}) end
+    end,
+})
+
+local ViewDroppedGunToggle = InnocentSection:CreateToggle({
+    Name = "View Dropped Gun",
+    Flag = "View_Dropped_Gun",
+    CurrentValue = false,
+    Callback = function(state) _G.ViewDroppedGunEnabled = state end,
+})
+
+local AutoGrabGunToggle = InnocentSection:CreateToggle({
+    Name = "Auto Grab Gun",
+    Flag = "Auto_Grab_Gun",
+    CurrentValue = false,
+    Callback = function(state) _G.AutoGrabGunEnabled = state end,
+})
+
+InnocentSection:CreateButton({
+    Name = "Grab Gun",
+    Callback = function() grabDroppedGunAction() end,
+})
+
+InnocentSection:CreateKeybind({
+    Name = "Grab Gun Keybind",
+    CurrentKeybind = Enum.KeyCode.G,
+    Flag = "Grab_Gun_Keybind",
+    Callback = function(key) end,
+    Pressed = function() grabDroppedGunAction() end,
+})
+
+local GunStatusLabel = InnocentSection:CreateLabel("❌ Gun Status : Not Dropped")
+
+local SheriffSection = MainTab:CreateSection("Sheriff")
+
+local SheriffAimbotToggle = SheriffSection:CreateToggle({
+    Name = "Turn On Aimbot",
+    Flag = "Sheriff_Aimbot_Toggle",
+    CurrentValue = false,
+    Callback = function(state)
+        aimbotEnabled = state
+        if not state then LocalPlayer.CameraMode = Enum.CameraMode.Classic end
+    end,
+})
+
+SheriffSection:CreateDropdown({
+    Name = "Aimbot Mode",
+    Mode = "single",
+    Options = {"Hold", "Toggle"},
+    CurrentOption = "Hold",
+    Flag = "Aimbotting_Mode",
+    Callback = function(selected)
+        aimbotMode = selected
+        isAimingPressed = false
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
+    end,
+})
+
+SheriffSection:CreateKeybind({
+    Name = "Aimbot Keybind",
+    CurrentKeybind = Enum.KeyCode.F,
+    Flag = "MyKeybind",
+    Callback = function(key) aimbotKey = key end,
+})
+
+SheriffSection:CreateSlider({
+    Name = "Aiming Smoothness",
+    Range = {0, 10},
+    Increment = 1,
+    CurrentValue = 0,
+    Flag = "Aiming_Smoothness",
+    Callback = function(value) aimbotSmoothness = value end,
+})
+
+local CameraModeDropdown = nil
+
+local LockingModeDropdown = SheriffSection:CreateDropdown({
+    Name = "Locking Mode",
+    Mode = "single",
+    Options = {"Cursor", "Camera"},
+    CurrentOption = "Camera",
+    Flag = "Locking_Mode",
+    Callback = function(selected)
+        lockingMode = selected
+        if selected ~= "Camera" then LocalPlayer.CameraMode = Enum.CameraMode.Classic end
+        toggleElementVisible(CameraModeDropdown, selected == "Camera")
+    end,
+})
+
+CameraModeDropdown = SheriffSection:CreateDropdown({
+    Name = "Camera Mode",
+    Mode = "single",
+    Options = {"3rd Person", "First Person"},
+    CurrentOption = "First Person",
+    Flag = "AimCamera_Mode",
+    Callback = function(selected)
+        cameraModeSetting = selected
+        if selected ~= "First Person" then LocalPlayer.CameraMode = Enum.CameraMode.Classic end
+    end,
+})
+
+SheriffSection:CreateButton({
+    Name = "Shoot Murderer",
+    Callback = function() toggleShootMurderer() end,
+})
+
+SheriffSection:CreateKeybind({
+    Name = "Shoot Murderer Keybind",
+    CurrentKeybind = Enum.KeyCode.C,
+    Flag = "Shoot_MurdererKey_bind",
+    Callback = function(key) end,
+    Pressed = function() toggleShootMurderer() end,
+})
+
+SheriffSection:CreateDropdown({
+    Name = "Shoot Side",
+    Mode = "single",
+    Options = {"From Back", "Above Head"},
+    CurrentOption = "From Back",
+    Flag = "Shoot_Side",
+    Callback = function(selected) shootSideSetting = selected end,
+})
+
+local MurdererSection = MainTab:CreateSection("Murderer")
+
+MurdererSection:CreateButton({
+    Name = "Kill Sheriff",
+    Callback = function() toggleKillSheriff() end,
+})
+
+MurdererSection:CreateButton({
+    Name = "Kill Everyone",
+    Callback = function() toggleKillEveryone() end,
+})
+
+MurdererSection:CreateKeybind({
+    Name = "Kill Everyone Keybind",
+    CurrentKeybind = Enum.KeyCode.K,
+    Flag = "KillEveryoneKeybind",
+    Callback = function(key) end,
+    Pressed = function() toggleKillEveryone() end,
+})
+
+local function getPlayerOptions()
+    local options = {}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then table.insert(options, player.Name) end
+    end
+    table.sort(options)
+    return options
+end
+
+local killEveryoneWhitelistDropdown = MurdererSection:CreateDropdown({
+    Name = "Kill Everyone Whitelist",
+    Mode = "multi",
+    Options = getPlayerOptions(),
+    CurrentOption = {},
+    Flag = "Kill_Everyone_Whitelist",
+    Callback = function(selected) killEveryoneWhitelist = selected end,
+})
+
+MurdererSection:CreateTextbox({
+    Name = "Kill Player",
+    PlaceholderText = "Enter player name...",
+    CurrentValue = "",
+    Flag = "KillPlayer",
+    Callback = function(text, enterPressed)
+        killPlayerTargetName = text
+        if enterPressed then toggleKillPlayer() end
+    end,
+})
+
+-- ==================== VISUALS TAB ====================
+
+local VisualsTab = Window:CreateTab({
+    Name = "Visuals",
+    Icon = 123456789,
+})
+
+local EspSection = VisualsTab:CreateSection("Esp")
+
+local InnoEspToggle = EspSection:CreateToggle({
+    Name = "Innocent ESP",
+    Flag = "InnoEspToggle",
+    CurrentValue = false,
+    Callback = function(state) innoEsp = state end,
+})
+
+local SheriffEspToggle = EspSection:CreateToggle({
+    Name = "Sheriff ESP",
+    Flag = "SheriffEspToggle",
+    CurrentValue = false,
+    Callback = function(state) sheriffEsp = state end,
+})
+
+local MurdEspToggle = EspSection:CreateToggle({
+    Name = "Murderer ESP",
+    Flag = "MurdEspToggle",
+    CurrentValue = false,
+    Callback = function(state) murdEsp = state end,
+})
+
+local ChamsSection = VisualsTab:CreateSection("Chams")
+
+local InnoChamsToggle = ChamsSection:CreateToggle({
+    Name = "Innocent Chams",
+    Flag = "InnoChamsToggle",
+    CurrentValue = false,
+    Callback = function(state)
+        innoChams = state
+        if not state then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Character then clearChams(p.Character) end
+            end
+        end
+    end,
+})
+
+local SheriffChamsToggle = ChamsSection:CreateToggle({
+    Name = "Sheriff Chams",
+    Flag = "SheriffChamsToggle",
+    CurrentValue = false,
+    Callback = function(state)
+        sheriffChams = state
+        if not state then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Character then clearChams(p.Character) end
+            end
+        end
+    end,
+})
+
+local MurdChamsToggle = ChamsSection:CreateToggle({
+    Name = "Murderer Chams",
+    Flag = "MurdChamsToggle",
+    CurrentValue = false,
+    Callback = function(state)
+        murdChams = state
+        if not state then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p.Character then clearChams(p.Character) end
+            end
+        end
+    end,
+})
+
+local CoinsChamsToggle = ChamsSection:CreateToggle({
+    Name = "Coins Chams",
+    Flag = "CoinsChamsToggle",
+    CurrentValue = false,
+    Callback = function(state)
+        coinsChams = state
+        if not state then
+            for _, child in ipairs(Workspace:GetDescendants()) do
+                if child.Name == "CuteWareCoinChams" then
+                    pcall(function() child:Destroy() end)
+                end
+            end
+        end
+    end,
+})
+
+ChamsSection:CreateSlider({
+    Name = "Chams Opacity",
+    Range = {0, 100},
+    Increment = 1,
+    CurrentValue = 30,
+    Flag = "ChamsOpacity",
+    Callback = function(value) chamsOpacityValue = 1 - (value / 100) end,
+})
+
+local ChatSection = VisualsTab:CreateSection("Chat")
+ChatSection:CreateButton({
+    Name = "Unlock Dead Chat",
+    Callback = function() end,
+})
+
+-- ==================== PLAYER TAB ====================
+
+local PlayerTab = Window:CreateTab({
+    Name = "Player",
+    Icon = 123456789,
+})
+
+local FlingSection = PlayerTab:CreateSection("Fling")
+local flingDropdown
+
+-- FIX: Proper dropdown refresh that rebuilds list completely
+local function refreshPlayerDropdowns()
+    local opts = getPlayerOptions()
+    if flingDropdown and flingDropdown.Refresh then
+        pcall(function() flingDropdown:Refresh(opts) end)
+    end
+    if killEveryoneWhitelistDropdown and killEveryoneWhitelistDropdown.Refresh then
+        pcall(function() killEveryoneWhitelistDropdown:Refresh(opts) end)
+    end
+end
+
+regConn(RunService.Heartbeat:Connect(function()
+    if antiFlingEnabled and not isFlinging then
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                if hrp and hrp:IsA("BasePart") and not hrp.Anchored then
+                    hrp.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0, 0, 0)
+                    hrp.Velocity = Vector3.new(0, 0, 0)
+                    hrp.RotVelocity = Vector3.new(0, 0, 0)
+                    hrp.CanCollide = false
+                end
+                for _, part in ipairs(player.Character:GetDescendants()) do
+                    if part:IsA("BasePart") then part.CanCollide = false end
+                end
+            end
+        end
+    end
+end))
+
+regConn(RunService.Heartbeat:Connect(function()
+    if antiVoidEnabled and LocalPlayer.Character then
+        local root = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        if root then
+            local limit = (Workspace.FallenPartsDestroyHeight and Workspace.FallenPartsDestroyHeight ~= 0/0) and (Workspace.FallenPartsDestroyHeight + 35) or -80
+            if root.Position.Y < limit then
+                root.Velocity = Vector3.new(0, 0, 0)
+                root.CFrame = CFrame.new(root.Position.X, 70, root.Position.Z)
+            end
+        end
+    end
+end))
+
+regConn(UserInputService.InputBegan:Connect(function(input, gpe)
+    if UserInputService:GetFocusedTextBox() then return end
+    if input.KeyCode == aimbotKey then
+        if aimbotMode == "Toggle" then
+            isAimingPressed = not isAimingPressed
+            if not isAimingPressed then LocalPlayer.CameraMode = Enum.CameraMode.Classic end
+        else
+            isAimingPressed = true
+        end
+    end
+end))
+
+regConn(UserInputService.InputEnded:Connect(function(input, gpe)
+    if input.KeyCode == aimbotKey and aimbotMode == "Hold" then
+        isAimingPressed = false
+        LocalPlayer.CameraMode = Enum.CameraMode.Classic
+    end
+end))
+
+local wasAimingActive = false
+RunService:BindToRenderStep("CuteWareAimbotEngine", Enum.RenderPriority.Camera.Value + 1, function()
+    if aimbotEnabled and isAimingPressed then
+        wasAimingActive = true
+        local target = nil
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then
+                local hasKnife = false
+                if p.Backpack then
+                    for _, tool in ipairs(p.Backpack:GetChildren()) do
+                        if tool:IsA("Tool") and (tool.Name:lower() == "knife" or tool:FindFirstChild("KnifeScript") or tool:FindFirstChild("Stab") or tool:FindFirstChild("Slash")) then
+                            hasKnife = true
+                            break
+                        end
+                    end
+                end
+                if not hasKnife and p.Character then
+                    for _, tool in ipairs(p.Character:GetChildren()) do
+                        if tool:IsA("Tool") and (tool.Name:lower() == "knife" or tool:FindFirstChild("KnifeScript") or tool:FindFirstChild("Stab") or tool:FindFirstChild("Slash")) then
+                            hasKnife = true
+                            break
+                        end
+                    end
+                end
+                if hasKnife and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                    local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health > 0 then
+                        target = p.Character.HumanoidRootPart
+                        break
+                    end
+                end
+            end
+        end
+
+        if target then
+            local camera = Workspace.CurrentCamera
+            if lockingMode == "Camera" then
+                if cameraModeSetting == "First Person" then
+                    LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
+                else
+                    LocalPlayer.CameraMode = Enum.CameraMode.Classic
+                end
+                local targetCFrame = CFrame.lookAt(camera.CFrame.Position, target.Position)
+                if aimbotSmoothness == 0 then
+                    camera.CFrame = targetCFrame
+                else
+                    camera.CFrame = camera.CFrame:Lerp(targetCFrame, 1 / (aimbotSmoothness + 1))
+                end
+            elseif lockingMode == "Cursor" then
+                LocalPlayer.CameraMode = Enum.CameraMode.Classic
+                local screenPos, onScreen = camera:WorldToViewportPoint(target.Position)
+                if onScreen then
+                    local mousePos = UserInputService:GetMouseLocation()
+                    local deltaX = (screenPos.X - mousePos.X)
+                    local deltaY = (screenPos.Y - mousePos.Y)
+                    if mousemoverel then
+                        local smooth = math.max(1, aimbotSmoothness * 2)
+                        mousemoverel(deltaX / smooth, deltaY / smooth)
+                    else
+                        camera.CFrame = camera.CFrame:Lerp(CFrame.lookAt(camera.CFrame.Position, target.Position), 1 / (aimbotSmoothness + 5))
+                    end
+                end
+            end
+        else
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        end
+    else
+        if wasAimingActive then
+            wasAimingActive = false
+            LocalPlayer.CameraMode = Enum.CameraMode.Classic
+        end
+    end
+end)
+
+-- ESP + Chams Loop (skips when xpFarm or coinFarm active to avoid conflicts)
+task.spawn(function()
+    while true do
+        if _G.CuteWareScriptID ~= currentScriptID then break end
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer then
+                pcall(function()
+                    local character = player.Character
+                    if character and character:FindFirstChild("Head") then
+                        local humanoid = character:FindFirstChildOfClass("Humanoid")
+                        if humanoid and humanoid.Health > 0 then
+                            local role = playerRoles[player] or "Innocent"
+                            local color = Color3.fromRGB(0, 255, 0)
+                            local espEnabled, chamsEnabled = false, false
+
+                            if role == "Murderer" then
+                                color = Color3.fromRGB(255, 0, 0)
+                                espEnabled = murdEsp
+                                chamsEnabled = murdChams
+                            elseif role == "Sheriff" then
+                                color = Color3.fromRGB(0, 0, 255)
+                                espEnabled = sheriffEsp
+                                chamsEnabled = sheriffChams
+                            else
+                                color = Color3.fromRGB(0, 255, 0)
+                                espEnabled = innoEsp
+                                chamsEnabled = innoChams
+                            end
+
+                            local head = character.Head
+                            local existingEsp = head:FindFirstChild("CuteWareESP")
+                            if espEnabled then
+                                if not existingEsp then
+                                    local bgui = Instance.new("BillboardGui")
+                                    bgui.Name = "CuteWareESP"
+                                    bgui.AlwaysOnTop = true
+                                    bgui.Size = UDim2.new(0, 200, 0, 50)
+                                    bgui.StudsOffset = Vector3.new(0, 3, 0)
+                                    bgui.Adornee = head
+                                    local tl = Instance.new("TextLabel")
+                                    tl.Name = "NameLabel"
+                                    tl.BackgroundTransparency = 1
+                                    tl.Size = UDim2.new(1, 0, 1, 0)
+                                    tl.Text = player.Name
+                                    tl.Font = Enum.Font.GothamBold
+                                    tl.TextSize = 16
+                                    tl.TextColor3 = color
+                                    tl.TextStrokeTransparency = 0.5
+                                    tl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                                    tl.Parent = bgui
+                                    bgui.Parent = head
+                                else
+                                    existingEsp.NameLabel.TextColor3 = color
+                                    existingEsp.NameLabel.Text = player.Name
+                                    existingEsp.NameLabel.Font = Enum.Font.GothamBold
+                                    existingEsp.NameLabel.TextStrokeTransparency = 0.5
+                                end
+                            else
+                                if existingEsp then existingEsp:Destroy() end
+                            end
+
+                            if chamsEnabled then
+                                applyChams(character, color, chamsOpacityValue)
+                            else
+                                clearChams(character)
+                            end
+                        else
+                            clearChams(character)
+                            if character:FindFirstChild("Head") and character.Head:FindFirstChild("CuteWareESP") then
+                                character.Head.CuteWareESP:Destroy()
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+-- View Dropped Gun: white chams + white "Dropped Gun" label above part
+task.spawn(function()
+    while true do
+        if _G.CuteWareScriptID ~= currentScriptID then break end
+        local gun = findGunDrop()
+
+        -- Clean up old dropped gun visuals
+        for _, desc in ipairs(Workspace:GetDescendants()) do
+            if desc.Name == "CuteWareDroppedGunChams" or desc.Name == "CuteWareDroppedGunESP" then
+                pcall(function() desc:Destroy() end)
+            end
+        end
+
+        if _G.ViewDroppedGunEnabled and gun then
+            -- White chams on the gun part
+            local existingChams = gun:FindFirstChild("CuteWareDroppedGunChams")
+            if not existingChams then
+                local adorn = Instance.new("BoxHandleAdornment")
+                adorn.Name = "CuteWareDroppedGunChams"
+                adorn.Size = gun.Size + Vector3.new(0.1, 0.1, 0.1)
+                adorn.AlwaysOnTop = true
+                adorn.ZIndex = 6
+                adorn.Color3 = Color3.fromRGB(255, 255, 255)
+                adorn.Transparency = 0.3
+                adorn.Adornee = gun
+                adorn.Parent = gun
+            end
+            -- White "Dropped Gun" text above
+            local existingEsp = gun:FindFirstChild("CuteWareDroppedGunESP")
+            if not existingEsp then
+                local bgui = Instance.new("BillboardGui")
+                bgui.Name = "CuteWareDroppedGunESP"
+                bgui.AlwaysOnTop = true
+                bgui.Size = UDim2.new(0, 200, 0, 40)
+                bgui.StudsOffset = Vector3.new(0, 3, 0)
+                bgui.Adornee = gun
+                local tl = Instance.new("TextLabel")
+                tl.Name = "GunLabel"
+                tl.BackgroundTransparency = 1
+                tl.Size = UDim2.new(1, 0, 1, 0)
+                tl.Text = "Dropped Gun"
+                tl.Font = Enum.Font.GothamBold
+                tl.TextSize = 16
+                tl.TextColor3 = Color3.fromRGB(255, 255, 255)
+                tl.TextStrokeTransparency = 0.4
+                tl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+                tl.Parent = bgui
+                bgui.Parent = gun
+            end
+        end
+        task.wait(0.5)
+    end
+end)
+
+-- Gun Status & Auto-Grab loop
+task.spawn(function()
+    while true do
+        if _G.CuteWareScriptID ~= currentScriptID then break end
+        local gun = findGunDrop()
+        if gun then
+            updateLabelText(GunStatusLabel, "✅ Gun Status : Dropped")
+            if _G.AutoGrabGunEnabled then
+                local murdererIsFarEnough = true
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if playerRoles[p] == "Murderer" and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                        if (p.Character.HumanoidRootPart.Position - gun.Position).Magnitude < 5 then
+                            murdererIsFarEnough = false
+                            break
+                        end
+                    end
+                end
+                if murdererIsFarEnough and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    LocalPlayer.Character.HumanoidRootPart.CFrame = gun.CFrame + Vector3.new(0, 2, 0)
+                end
+            end
+        else
+            updateLabelText(GunStatusLabel, "❌ Gun Status : Not Dropped")
+        end
+        task.wait(0.3)
+    end
+end)
+
+-- Coins chams loop
+task.spawn(function()
+    while true do
+        if _G.CuteWareScriptID ~= currentScriptID then break end
+        if coinsChams then
+            pcall(function()
+                local targetFolder = Workspace:FindFirstChild("Normal") or Workspace
+                for _, child in ipairs(targetFolder:GetDescendants()) do
+                    if (child.Name == "CoinVisual" or child.Name == "GoldCoin" or string.find(string.lower(child.Name), "coin")) and child:IsA("BasePart") then
+                        if child.Transparency >= 0.9 then
+                            if child:FindFirstChild("CuteWareCoinChams") then
+                                child.CuteWareCoinChams:Destroy()
+                            end
+                        elseif not child:FindFirstChild("CuteWareCoinChams") then
+                            local adorn = Instance.new("BoxHandleAdornment")
+                            adorn.Name = "CuteWareCoinChams"
+                            adorn.Size = child.Size + Vector3.new(0.05, 0.05, 0.05)
+                            adorn.AlwaysOnTop = true
+                            adorn.ZIndex = 6
+                            adorn.Color3 = Color3.fromRGB(255, 215, 0)
+                            adorn.Transparency = chamsOpacityValue
+                            adorn.Adornee = child
+                            adorn.Parent = child
+                        end
+                    end
+                end
+            end)
+        end
+        task.wait(1)
+    end
+end)
+
+flingDropdown = FlingSection:CreateDropdown({
+    Name = "Players to Fling",
+    Mode = "multi",
+    Options = getPlayerOptions(),
+    CurrentOption = {},
+    Flag = "Players_to_Fling",
+    Callback = function(selected) selectedPlayers = selected end,
+})
+
+-- FIX: Proper player list refresh on join/leave/death
+local function onCharacterDeath(character)
+    task.wait(0.5)
+    refreshPlayerDropdowns()
+end
+
+regConn(Players.PlayerAdded:Connect(function(player)
+    refreshPlayerDropdowns()
+    player.CharacterAdded:Connect(function(char)
+        char:WaitForChild("Humanoid").Died:Connect(function() onCharacterDeath(char) end)
+    end)
+end))
+
+regConn(Players.PlayerRemoving:Connect(function(player)
+    task.wait(0.1)
+    refreshPlayerDropdowns()
+end))
+
+for _, player in ipairs(Players:GetPlayers()) do
+    if player.Character then
+        local hum = player.Character:FindFirstChild("Humanoid")
+        if hum then regConn(hum.Died:Connect(function() onCharacterDeath(player.Character) end)) end
+    end
+    regConn(player.CharacterAdded:Connect(function(char)
+        char:WaitForChild("Humanoid").Died:Connect(function() onCharacterDeath(char) end)
+    end))
+end
+
+FlingSection:CreateButton({
+    Name = "Fling Chosen Players",
+    Callback = function() doFling(selectedPlayers) end,
+})
+
+local AntiFlingToggle = FlingSection:CreateToggle({
+    Name = "Toggle Anti Fling",
+    Flag = "Anti_Fling",
+    CurrentValue = false,
+    Callback = function(state) antiFlingEnabled = state end,
+})
+
+local PlayerModsSection = PlayerTab:CreateSection("Player Mods")
+
+-- FIX: Noclip - immediately restores collisions when disabled
+local noclipConnection = nil
+regConn(RunService.Stepped:Connect(function()
+    if noclipEnabled and LocalPlayer.Character then
+        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = false end
+        end
+    elseif not noclipEnabled and LocalPlayer.Character then
+        -- Immediately restore collisions
+        for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then part.CanCollide = true end
+        end
+    end
+end))
+
+regConn(UserInputService.JumpRequest:Connect(function()
+    if infJumpEnabled and LocalPlayer.Character then
+        local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Jumping) end
+    end
+end))
+
+regConn(UserInputService.InputBegan:Connect(function(input, gpe)
+    if UserInputService:GetFocusedTextBox() then return end
+    if clickTpEnabled and input.UserInputType == Enum.UserInputType.MouseButton1 and UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+        local character = LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if root and Mouse.Hit then root.CFrame = CFrame.new(Mouse.Hit.Position + Vector3.new(0, 3, 0)) end
+    end
+end))
+
+regConn(RunService.Heartbeat:Connect(function()
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        if walkspeedEnabled then humanoid.WalkSpeed = walkspeedValue end
+        if jumppowerEnabled then humanoid.UseJumpPower = true humanoid.JumpPower = jumppowerValue end
+    end
+end))
+
+local FlyToggle = PlayerModsSection:CreateToggle({
+    Name = "Toggle Fly",
+    Flag = "FlyToggle",
+    CurrentValue = false,
+    Callback = function(state)
+        flyEnabled = state
+        if flyEnabled then
+            local character = LocalPlayer.Character
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+            if root then
+                bodyVelocity = Instance.new("BodyVelocity")
+                bodyVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+                bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+                bodyVelocity.Parent = root
+                bodyGyro = Instance.new("BodyGyro")
+                bodyGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+                bodyGyro.CFrame = root.CFrame
+                bodyGyro.Parent = root
+                flyConnection = RunService.RenderStepped:Connect(function()
+                    local hum = character and character:FindFirstChildOfClass("Humanoid")
+                    if hum then hum.PlatformStand = true end
+                    local cameraCFrame = Workspace.CurrentCamera.CFrame
+                    local direction = Vector3.new(0, 0, 0)
+                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then direction = direction + cameraCFrame.LookVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then direction = direction - cameraCFrame.LookVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then direction = direction - cameraCFrame.RightVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then direction = direction + cameraCFrame.RightVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then direction = direction + Vector3.new(0, 1, 0) end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then direction = direction - Vector3.new(0, 1, 0) end
+                    if direction.Magnitude > 0 then bodyVelocity.Velocity = direction.Unit * (flySpeed * 25) else bodyVelocity.Velocity = Vector3.new(0, 0, 0) end
+                    bodyGyro.CFrame = cameraCFrame
+                end)
+                regConn(flyConnection)
+            end
+        else
+            if flyConnection then flyConnection:Disconnect() end
+            if bodyVelocity then bodyVelocity:Destroy() end
+            if bodyGyro then bodyGyro:Destroy() end
+            local character = LocalPlayer.Character
+            local hum = character and character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.PlatformStand = false end
+        end
+    end,
+})
+
+PlayerModsSection:CreateSlider({
+    Name = "Fly Speed",
+    Range = {0, 10},
+    Increment = 1,
+    CurrentValue = 1,
+    Flag = "Fly_Speed",
+    Callback = function(value) flySpeed = value end,
+})
+
+local ClickTpToggle = PlayerModsSection:CreateToggle({
+    Name = "Toggle Click TP",
+    Flag = "ClickTpToggle",
+    CurrentValue = false,
+    Callback = function(state) clickTpEnabled = state end,
+})
+
+PlayerModsSection:CreateLabel("🌸 Note : Hold LCtrl And Press LMB to TP")
+
+-- FIX: Noclip toggle now instantly restores collisions
+local NoclipToggle = PlayerModsSection:CreateToggle({
+    Name = "Toggle Noclip",
+    Flag = "Noclip",
+    CurrentValue = false,
+    Callback = function(state)
+        noclipEnabled = state
+        if not state and LocalPlayer.Character then
+            for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+                if part:IsA("BasePart") then part.CanCollide = true end
+            end
+        end
+    end,
+})
+
+local InfJumpToggle = PlayerModsSection:CreateToggle({
+    Name = "Toggle Inf Jump",
+    Flag = "Inf_Jump",
+    CurrentValue = false,
+    Callback = function(state) infJumpEnabled = state end,
+})
+
+local CustomWalkspeedToggle = PlayerModsSection:CreateToggle({
+    Name = "Set Custom Walkspeed",
+    Flag = "Custom_Walkspeed",
+    CurrentValue = false,
+    Callback = function(state)
+        walkspeedEnabled = state
+        if not state then
+            local character = LocalPlayer.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            if humanoid then humanoid.WalkSpeed = 16 end
+        end
+    end,
+})
+
+PlayerModsSection:CreateSlider({
+    Name = "Walkspeed",
+    Range = {16, 300},
+    Increment = 1,
+    CurrentValue = 16,
+    Flag = "Speed_Changer",
+    Callback = function(value) walkspeedValue = value end,
+})
+
+local CustomJumppowerToggle = PlayerModsSection:CreateToggle({
+    Name = "Set Custom Jumppower",
+    Flag = "Custom_Jumppower",
+    CurrentValue = false,
+    Callback = function(state)
+        jumppowerEnabled = state
+        if not state then
+            local character = LocalPlayer.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            if humanoid then humanoid.JumpPower = 50 end
+        end
+    end,
+})
+
+PlayerModsSection:CreateSlider({
+    Name = "Jumppower",
+    Range = {50, 300},
+    Increment = 1,
+    CurrentValue = 50,
+    Flag = "Power_Changer",
+    Callback = function(value) jumppowerValue = value end,
+})
+
+local ToolsSection = PlayerTab:CreateSection("Tools")
+
+local function applyXRay(v)
+    if v:IsA("BasePart") and not originalTransparencies[v] then
+        if v.Transparency > 0 then return end
+        if v:FindFirstAncestorOfClass("Tool") then return end
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player.Character and v:IsDescendantOf(player.Character) then return end
+        end
+        originalTransparencies[v] = v.Transparency
+        v.Transparency = 0.9
+    end
+end
+
+local XRayToggle = ToolsSection:CreateToggle({
+    Name = "Toggle XRay",
+    Flag = "XRayToggle",
+    CurrentValue = false,
+    Callback = function(state)
+        if state then
+            for _, v in ipairs(Workspace:GetDescendants()) do applyXRay(v) end
+            descendantConnection = Workspace.DescendantAdded:Connect(function(v) applyXRay(v) end)
+            regConn(descendantConnection)
+        else
+            if descendantConnection then descendantConnection:Disconnect() descendantConnection = nil end
+            for part, originalValue in pairs(originalTransparencies) do
+                if part and part.Parent then part.Transparency = originalValue end
+            end
+            table.clear(originalTransparencies)
+        end
+    end,
+})
+
+local AntiVoidToggle = ToolsSection:CreateToggle({
+    Name = "Toggle Anti Void",
+    Flag = "Anti_Void",
+    CurrentValue = false,
+    Callback = function(state) antiVoidEnabled = state end,
+})
+
+local LowGFXToggle = ToolsSection:CreateToggle({
+    Name = "Toggle Low GFX",
+    Flag = "Low_GFX",
+    CurrentValue = false,
+    Callback = function(state)
+        lowGfxEnabled = state
+        if state then
+            for _, v in ipairs(Workspace:GetDescendants()) do
+                if v:IsA("BasePart") and not v:IsA("Terrain") then
+                    if not originalGfx[v] then originalGfx[v] = {Material = v.Material} end
+                    v.Material = Enum.Material.SmoothPlastic
+                elseif v:IsA("Decal") or v:IsA("Texture") then
+                    if not originalGfx[v] then originalGfx[v] = {Transparency = v.Transparency} end
+                    v.Transparency = 1
+                end
+            end
+        else
+            for instance, data in pairs(originalGfx) do
+                if instance and instance.Parent then
+                    if data.Material then instance.Material = data.Material end
+                    if data.Transparency then instance.Transparency = data.Transparency end
+                end
+            end
+            table.clear(originalGfx)
+        end
+    end,
+})
+
+-- ==================== TELEPORTS TAB ====================
+
+local TeleportsTab = Window:CreateTab({
+    Name = "Teleports",
+    Icon = 123456789,
+})
+
+local LocationsSection = TeleportsTab:CreateSection("Locations")
+
+LocationsSection:CreateButton({
+    Name = "Lobby",
+    Callback = function()
+        local character = LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if root then root.CFrame = CFrame.new(13.82, 504.78, -51.92) end
+    end
+})
+
+LocationsSection:CreateButton({
+    Name = "Voting Room",
+    Callback = function()
+        local character = LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if root then root.CFrame = CFrame.new(13.89, 507.13, 35.83) end
+    end
+})
+
+-- FIX: Map teleport - random Spawn part NOT in lobby radius
+LocationsSection:CreateButton({
+    Name = "Map",
+    Callback = function()
+        local character = LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+
+        local spawnParts = {}
+        for _, v in ipairs(Workspace:GetDescendants()) do
+            if v:IsA("BasePart") and (v.Name == "SpawnLocation" or v.Name == "Spawn" or string.lower(v.Name) == "spawn") then
+                if not isInLobby(v.Position) then
+                    table.insert(spawnParts, v)
+                end
+            end
+        end
+
+        if #spawnParts > 0 then
+            local chosen = spawnParts[math.random(1, #spawnParts)]
+            root.CFrame = chosen.CFrame + Vector3.new(0, 3, 0)
+        else
+            -- Fallback: coin area
+            for _, v in ipairs(Workspace:GetDescendants()) do
+                if v:IsA("BasePart") and (v.Name == "Coin Area" or v.Name == "coin area" or v.Name == "Coin_Server" or v.Name == "coin_server") then
+                    if not isInLobby(v.Position) then
+                        root.CFrame = v.CFrame + Vector3.new(0, 3, 0)
+                        break
+                    end
+                end
+            end
+        end
+    end
+})
+
+LocationsSection:CreateButton({
+    Name = "Sheriff",
+    Callback = function()
+        local character = LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if root then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer then
+                    local pChar = p.Character
+                    if pChar and pChar:FindFirstChild("HumanoidRootPart") then
+                        if p.Backpack:FindFirstChild("Gun") or pChar:FindFirstChild("Gun") then
+                            root.CFrame = pChar.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0)
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+})
+
+LocationsSection:CreateButton({
+    Name = "Murderer",
+    Callback = function()
+        local character = LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        if root then
+            for _, p in ipairs(Players:GetPlayers()) do
+                if p ~= LocalPlayer then
+                    local pChar = p.Character
+                    if pChar and pChar:FindFirstChild("HumanoidRootPart") then
+                        if p.Backpack:FindFirstChild("Knife") or pChar:FindFirstChild("Knife") then
+                            root.CFrame = pChar.HumanoidRootPart.CFrame + Vector3.new(0, 3, 0)
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+})
+
+local tpPlayerName = ""
+LocationsSection:CreateTextbox({
+    Name = "Teleport to Player",
+    PlaceholderText = "Enter player name...",
+    CurrentValue = "",
+    Flag = "Teleport_to_Player",
+    Callback = function(text, enterPressed) tpPlayerName = text end,
+})
+
+LocationsSection:CreateButton({
+    Name = "Teleport",
+    Callback = function()
+        if tpPlayerName == "" then return end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if string.find(string.lower(p.Name), string.lower(tpPlayerName)) and p ~= LocalPlayer then
+                local character = LocalPlayer.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                local pChar = p.Character
+                local pRoot = pChar and pChar:FindFirstChild("HumanoidRootPart")
+                if root and pRoot then
+                    root.CFrame = pRoot.CFrame + Vector3.new(0, 3, 0)
+                end
+                break
+            end
+        end
+    end
+})
+
+local ChooseMapSection = TeleportsTab:CreateSection("Choose Map")
+
+ChooseMapSection:CreateDropdown({
+    Name = "Select Map",
+    Mode = "single",
+    Options = {"Map 1", "Map 2", "Map 3"},
+    CurrentOption = "Map 1",
+    Flag = "Choose_Map_Dropdown",
+    Callback = function(selected) selectedMapToVote = selected end,
+})
+
+ChooseMapSection:CreateButton({
+    Name = "Vote (uses reset)",
+    Callback = function()
+        local targetDetector = "Detector3"
+        if selectedMapToVote == "Map 2" then targetDetector = "Detector2" end
+        if selectedMapToVote == "Map 3" then targetDetector = "Detector1" end
+
+        task.spawn(function()
+            CuteWare:Notify({Title = "Voting", Content = "Voting loop started for " .. selectedMapToVote, Duration = 2})
+            for i = 1, 3 do
+                if _G.CuteWareScriptID ~= currentScriptID then break end
+                local detectorPart = nil
+                for _, v in ipairs(Workspace:GetDescendants()) do
+                    if v:IsA("BasePart") and v.Name == targetDetector then
+                        detectorPart = v
+                        break
+                    end
+                end
+                if detectorPart and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                    LocalPlayer.Character.HumanoidRootPart.CFrame = detectorPart.CFrame + Vector3.new(0, 3, 0)
+                    task.wait(0.3)
+                    if i < 3 then
+                        LocalPlayer.Character:BreakJoints()
+                        LocalPlayer.CharacterAdded:Wait()
+                        task.wait(1)
+                    end
+                else
+                    CuteWare:Notify({Title = "Error", Content = targetDetector .. " not found!", Duration = 3})
+                    break
+                end
+            end
+            CuteWare:Notify({Title = "Success", Content = "Finished voting!", Duration = 3})
+        end)
+    end,
+})
+
+local ServerSettingsSection = TeleportsTab:CreateSection("Server Settings")
+ServerSettingsSection:CreateButton({ Name = "Rejoin", Callback = function() end })
+ServerSettingsSection:CreateButton({ Name = "Switch Server", Callback = function() end })
+ServerSettingsSection:CreateButton({ Name = "Join Low Server", Callback = function() end })
+
+-- ==================== EMOTES TAB ====================
+
+local EmotesTab = Window:CreateTab({
+    Name = "Emotes",
+    Icon = 123456789,
+})
+
+local Mm2EmotesSection = EmotesTab:CreateSection("MM2 Emotes")
+Mm2EmotesSection:CreateButton({ Name = "Stop Emote", Callback = function() stopCustomEmote() end })
+Mm2EmotesSection:CreateButton({ Name = "Zen", Callback = function() playCustomEmote(76095183942765) end })
+Mm2EmotesSection:CreateButton({ Name = "Sit", Callback = function() playCustomEmote(507722262) end })
+Mm2EmotesSection:CreateButton({ Name = "Ninja", Callback = function() playCustomEmote(507712134) end })
+Mm2EmotesSection:CreateButton({ Name = "Dab", Callback = function() playCustomEmote(507711612) end })
+Mm2EmotesSection:CreateButton({ Name = "Floss", Callback = function() playCustomEmote(507711905) end })
+Mm2EmotesSection:CreateButton({ Name = "Zombie", Callback = function() playCustomEmote(507711292) end })
+Mm2EmotesSection:CreateButton({ Name = "Headless", Callback = function() playCustomEmote(128777973) end })
+
+local DefaultEmotesSection = EmotesTab:CreateSection("Default Emotes")
+DefaultEmotesSection:CreateButton({ Name = "Wave", Callback = function() playCustomEmote(128777973) end })
+DefaultEmotesSection:CreateButton({ Name = "Cheer", Callback = function() playCustomEmote(507710771) end })
+DefaultEmotesSection:CreateButton({ Name = "Laugh", Callback = function() playCustomEmote(507712134) end })
+DefaultEmotesSection:CreateButton({ Name = "/e dance 1", Callback = function() playCustomEmote(507711292) end })
+DefaultEmotesSection:CreateButton({ Name = "/e dance 2", Callback = function() playCustomEmote(507711612) end })
+DefaultEmotesSection:CreateButton({ Name = "/e dance 3", Callback = function() playCustomEmote(507711905) end })
+
+local CustomEmotesSection = EmotesTab:CreateSection("Custom Emotes")
+local customEmoteIdString = ""
+CustomEmotesSection:CreateTextbox({
+    Name = "Custom Emote ID",
+    PlaceholderText = "Enter ID...",
+    CurrentValue = "",
+    Flag = "Custom_Emote",
+    Callback = function(text, enterPressed)
+        customEmoteIdString = text
+        if enterPressed and tonumber(text) then playCustomEmote(tonumber(text)) end
+    end,
+})
+CustomEmotesSection:CreateButton({
+    Name = "Run Animation",
+    Callback = function()
+        if tonumber(customEmoteIdString) then
+            playCustomEmote(tonumber(customEmoteIdString))
+        else
+            CuteWare:Notify({Title = "Error", Content = "Invalid animation ID", Duration = 3})
+        end
+    end
+})
+
+-- ==================== AUTOFARM TAB ====================
+
+local AutofarmTab = Window:CreateTab({
+    Name = "Autofarm",
+    Icon = 123456789,
+})
+
+local CoinAutofarmSection = AutofarmTab:CreateSection("Coins Autofarm")
+
+-- Coin farm: fly-style noclip movement toward CoinVisual parts, approach from below
+local CoinAutofarmToggle = CoinAutofarmSection:CreateToggle({
+    Name = "Start Coin Autofarm",
+    Flag = "Start_Coin_Autofarm",
+    CurrentValue = false,
+    Callback = function(state)
+        coinFarmActive = state
+        if state then
+            CuteWare:Notify({Title = "Coin Farm", Content = "Coin Autofarm Started!", Duration = 2})
+
+            task.spawn(function()
+                while coinFarmActive and _G.CuteWareScriptID == currentScriptID do
+                    local character = LocalPlayer.Character
+                    local root = character and character:FindFirstChild("HumanoidRootPart")
+                    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+                    if not root or not humanoid then task.wait(0.5) continue end
+
+                    -- Find nearest visible CoinVisual
+                    local nearestCoin = nil
+                    local nearestDist = math.huge
+
+                    for _, child in ipairs(Workspace:GetDescendants()) do
+                        if child.Name == "CoinVisual" and child:IsA("BasePart") and child.Transparency < 0.9 then
+                            local dist = (child.Position - root.Position).Magnitude
+                            if dist < nearestDist then
+                                nearestDist = dist
+                                nearestCoin = child
+                            end
+                        end
+                    end
+
+                    if nearestCoin then
+                        -- Enable platformstand for fly-like movement
+                        humanoid.PlatformStand = true
+
+                        -- Disable collisions (noclip style)
+                        for _, part in ipairs(character:GetDescendants()) do
+                            if part:IsA("BasePart") then part.CanCollide = false end
+                        end
+
+                        -- Approach from BELOW: go under coin first, then up
+                        local coinPos = nearestCoin.Position
+                        local belowCoin = Vector3.new(coinPos.X, coinPos.Y - 5, coinPos.Z)
+
+                        -- Move toward below-coin position
+                        local startPos = root.Position
+                        local steps = math.max(5, math.floor(nearestDist / coinFarmSpeed))
+
+                        for i = 1, steps do
+                            if not coinFarmActive then break end
+                            character = LocalPlayer.Character
+                            root = character and character:FindFirstChild("HumanoidRootPart")
+                            if not root then break end
+
+                            -- Check if coin still exists
+                            if not nearestCoin or not nearestCoin.Parent or nearestCoin.Transparency >= 0.9 then break end
+
+                            local t = i / steps
+                            local targetPos
+
+                            if i <= steps * 0.6 then
+                                -- Go to below position first
+                                targetPos = startPos:Lerp(belowCoin, t / 0.6)
+                            else
+                                -- Then go up to coin
+                                local t2 = (t - 0.6) / 0.4
+                                targetPos = belowCoin:Lerp(coinPos + Vector3.new(0, 1, 0), t2)
+                            end
+
+                            root.CFrame = CFrame.new(targetPos)
+                            task.wait(0.02 / coinFarmSpeed)
+                        end
+
+                        -- Final snap to coin
+                        if nearestCoin and nearestCoin.Parent and coinFarmActive then
+                            root.CFrame = CFrame.new(nearestCoin.Position + Vector3.new(0, 1, 0))
+                        end
+
+                        humanoid.PlatformStand = false
+                        for _, part in ipairs(character:GetDescendants()) do
+                            if part:IsA("BasePart") then part.CanCollide = true end
+                        end
+                    else
+                        -- Check if bag is full (all bags visible as full)
+                        -- This is handled by CoinBagContainerScript side
+                        -- Here we check the Full label visibility
+                        local isBagFull = false
+                        local screenGui = LocalPlayer.PlayerGui:FindFirstChild("CoinBags") or LocalPlayer.PlayerGui:FindFirstChild("MainGUI")
+                        if screenGui then
+                            for _, frame in ipairs(screenGui:GetDescendants()) do
+                                if frame.Name == "Full" and frame:IsA("TextLabel") and frame.Visible then
+                                    isBagFull = true
+                                    break
+                                end
+                            end
+                        end
+
+                        if isBagFull then
+                            CuteWare:Notify({Title = "Coin Farm", Content = "Bag full! Executing action...", Duration = 2})
+                            if coinFarmWhenDone == "Reset" then
+                                LocalPlayer.Character:BreakJoints()
+                                LocalPlayer.CharacterAdded:Wait()
+                                task.wait(1.5)
+                            elseif coinFarmWhenDone == "TP to Lobby" then
+                                local root2 = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                                if root2 then root2.CFrame = CFrame.new(13.82, 504.78, -51.92) end
+                            elseif coinFarmWhenDone == "Kill Everyone" then
+                                -- Fling all non-lobby players
+                                local targets = {}
+                                for _, p in ipairs(Players:GetPlayers()) do
+                                    if p ~= LocalPlayer then
+                                        local pRoot = p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+                                        if pRoot and not isInLobby(pRoot.Position) then
+                                            table.insert(targets, p.Name)
+                                        end
+                                    end
+                                end
+                                if #targets > 0 then doFling(targets) end
+                            end
+                        else
+                            task.wait(0.5)
+                        end
+                    end
+
+                    task.wait(0.05)
+                end
+
+                -- Cleanup after farm stops
+                local character = LocalPlayer.Character
+                local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+                if humanoid then humanoid.PlatformStand = false end
+                if character then
+                    for _, part in ipairs(character:GetDescendants()) do
+                        if part:IsA("BasePart") then part.CanCollide = true end
+                    end
+                end
+            end)
+        else
+            CuteWare:Notify({Title = "Coin Farm", Content = "Coin Autofarm Stopped", Duration = 2})
+        end
+    end,
+})
+
+CoinAutofarmSection:CreateSlider({
+    Name = "Farming Speed",
+    Range = {1, 5},
+    Increment = 0.1,
+    CurrentValue = 2,
+    Flag = "Farming_Speed",
+    Callback = function(value) coinFarmSpeed = value end,
+})
+
+CoinAutofarmSection:CreateDropdown({
+    Name = "When done",
+    Mode = "single",
+    Options = {"Reset", "TP to Lobby", "Kill Everyone"},
+    CurrentOption = "Reset",
+    Flag = "CoinFarm_When_done",
+    Callback = function(selected) coinFarmWhenDone = selected end,
+})
+
+local CoinAutofarmHopServToggle = CoinAutofarmSection:CreateToggle({
+    Name = "Hop Server When Low Players",
+    Flag = "Hop_Server_When_Low_Players",
+    CurrentValue = false,
+    Callback = function(state) end,
+})
+
+CoinAutofarmSection:CreateLabel("💰 Coins Earned : 0")
+
+-- ==================== XP AUTOFARM ====================
+
+local XPAutofarmSection = AutofarmTab:CreateSection("XP Autofarm")
+
+local xpEarnedLabel = nil
+local xpRemainingLabel = nil
+
+local XPAutofarmToggle = XPAutofarmSection:CreateToggle({
+    Name = "Start XP Autofarm",
+    Flag = "XP_Autofarm_Toggle",
+    CurrentValue = false,
+    Callback = function(state)
+        xpFarmActive = state
+
+        if state then
+            -- Enable anti-fling automatically
+            antiFlingEnabled = true
+            xpEarned = 0
+            xpStartValue = 0
+
+            -- Read starting XP
+            local xpText = getXPLabelData()
+            local xpData = parseXPText(xpText)
+            if xpData then
+                xpStartValue = xpData.current
+            end
+
+            CuteWare:Notify({Title = "XP Farm", Content = "XP Autofarm Started! Anti-Fling ON", Duration = 3})
+
+            task.spawn(function()
+                while xpFarmActive and _G.CuteWareScriptID == currentScriptID do
+                    local character = LocalPlayer.Character
+                    local root = character and character:FindFirstChild("HumanoidRootPart")
+                    if not root then task.wait(0.5) continue end
+
+                    local myRole = getPlayerRole(LocalPlayer)
+
+                    -- MURDERER: kill everyone regardless of whitelist
+                    if myRole == "Murderer" then
+                        local knife = getPlayerKnife()
+                        if knife then
+                            for _, p in ipairs(Players:GetPlayers()) do
+                                if not xpFarmActive then break end
+                                if p ~= LocalPlayer then
+                                    local char = p.Character
+                                    local pRoot = char and char:FindFirstChild("HumanoidRootPart")
+                                    local hum = char and char:FindFirstChildOfClass("Humanoid")
+                                    if pRoot and hum and hum.Health > 0 and not isInLobby(pRoot.Position) then
+                                        root.CFrame = pRoot.CFrame * CFrame.new(0, 0, 0.8)
+                                        if knife.Parent == LocalPlayer.Backpack then
+                                            knife.Parent = character
+                                        end
+                                        for i = 1, 4 do
+                                            knife:Activate()
+                                            task.wait(0.02)
+                                        end
+                                        task.wait(0.05)
+                                    end
+                                end
+                            end
+                        end
+
+                    -- SHERIFF: teleport behind murderer and shoot until dead or gun gone
+                    elseif myRole == "Sheriff" then
+                        local gun = getPlayerGun()
+                        if gun then
+                            local murderer = nil
+                            for _, p in ipairs(Players:GetPlayers()) do
+                                if p ~= LocalPlayer and playerRoles[p] == "Murderer" then
+                                    if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                                        local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                                        if hum and hum.Health > 0 then
+                                            murderer = p.Character
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+
+                            if murderer then
+                                local mudRoot = murderer:FindFirstChild("HumanoidRootPart")
+                                if mudRoot and root then
+                                    -- Teleport behind murderer
+                                    root.CFrame = mudRoot.CFrame * CFrame.new(0, 0, 2)
+                                    if gun.Parent == LocalPlayer.Backpack then
+                                        gun.Parent = character
+                                    end
+                                    task.wait(0.15)
+                                    gun:Activate()
+                                    task.wait(0.3)
+                                end
+                            end
+                        else
+                            -- Gun gone - go back to voting room every 3 seconds
+                            root.CFrame = CFrame.new(13.89, 507.13, 35.83)
+                            task.wait(3)
+                        end
+
+                    -- INNOCENT: look for GunDrop, else stay in voting room every 3 sec
+                    else
+                        local droppedGun = findGunDrop()
+                        if droppedGun then
+                            -- Grab dropped gun
+                            root.CFrame = droppedGun.CFrame + Vector3.new(0, 2, 0)
+                            task.wait(0.5)
+                            -- Go back to voting room
+                            root.CFrame = CFrame.new(13.89, 507.13, 35.83)
+                            task.wait(0.5)
+                            -- Start shooting (now has gun from pickup)
+                            local newGun = getPlayerGun()
+                            if newGun then
+                                local murderer = nil
+                                for _, p in ipairs(Players:GetPlayers()) do
+                                    if p ~= LocalPlayer and playerRoles[p] == "Murderer" then
+                                        if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+                                            local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                                            if hum and hum.Health > 0 then
+                                                murderer = p.Character
+                                                break
+                                            end
+                                        end
+                                    end
+                                end
+                                -- Shoot until gun gone
+                                while xpFarmActive and getPlayerGun() do
+                                    character = LocalPlayer.Character
+                                    root = character and character:FindFirstChild("HumanoidRootPart")
+                                    if not root then break end
+
+                                    if murderer then
+                                        local mudRoot = murderer:FindFirstChild("HumanoidRootPart")
+                                        local hum = murderer:FindFirstChildOfClass("Humanoid")
+                                        if not mudRoot or not hum or hum.Health <= 0 then break end
+                                        root.CFrame = mudRoot.CFrame * CFrame.new(0, 0, 2)
+                                        local g = getPlayerGun()
+                                        if g then
+                                            if g.Parent == LocalPlayer.Backpack then g.Parent = character end
+                                            g:Activate()
+                                        end
+                                        task.wait(0.3)
+                                    else
+                                        break
+                                    end
+                                end
+                            end
+                        else
+                            -- No gun drop - teleport to voting room every 3 seconds
+                            root.CFrame = CFrame.new(13.89, 507.13, 35.83)
+                            task.wait(3)
+                        end
+                    end
+
+                    task.wait(0.1)
+                end
+
+                -- Disable anti-fling when farm stops
+                antiFlingEnabled = false
+                CuteWare:Notify({Title = "XP Farm", Content = "XP Autofarm Stopped. Anti-Fling OFF", Duration = 3})
+            end)
+
+            -- XP label update loop
+            task.spawn(function()
+                while xpFarmActive and _G.CuteWareScriptID == currentScriptID do
+                    local xpText = getXPLabelData()
+                    local xpData = parseXPText(xpText)
+                    if xpData then
+                        local currentXP = xpData.current
+                        local maxXP = xpData.max
+                        local earned = currentXP - xpStartValue
+                        if earned < 0 then earned = 0 end -- leveled up
+                        local remaining = maxXP - currentXP
+                        updateLabelText(xpEarnedLabel, "✨ XP Earned : " .. tostring(earned))
+                        updateLabelText(xpRemainingLabel, "📊 XP to Next Level : " .. tostring(remaining))
+                    end
+                    task.wait(1)
+                end
+            end)
+
+        else
+            antiFlingEnabled = false
+            CuteWare:Notify({Title = "XP Farm", Content = "XP Autofarm Stopped", Duration = 2})
+        end
+    end,
+})
+
+xpEarnedLabel = XPAutofarmSection:CreateLabel("✨ XP Earned : 0")
+xpRemainingLabel = XPAutofarmSection:CreateLabel("📊 XP to Next Level : ---")
